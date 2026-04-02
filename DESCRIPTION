@@ -1,0 +1,25 @@
+Package: dataQI
+Type: Package
+Title: 사용자 친화형 데이터 품질 검사 시스템 (User-Friendly Data Quality Inspection System)
+Version: 0.1.0
+Authors@R: person("dataQI", "Maintainer", email = "maintainer@example.com",
+  role = c("aut", "cre"))
+Description: A user-friendly data quality inspection system that provides
+    automated checks for completeness, uniqueness, validity, and outlier
+    detection. Includes an interactive Shiny application for visual data
+    quality reporting.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Suggests:
+    shiny (>= 1.7.0),
+    shinydashboard (>= 0.7.0),
+    DT (>= 0.20),
+    ggplot2 (>= 3.4.0),
+    dplyr (>= 1.1.0),
+    readr (>= 2.1.0),
+    readxl (>= 1.4.0),
+    scales (>= 1.2.0),
+    shinyjs (>= 2.1.0),
+    testthat (>= 3.0.0)
+RoxygenNote: 7.2.3
