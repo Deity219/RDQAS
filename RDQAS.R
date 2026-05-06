@@ -108,7 +108,6 @@ assess_data_quality <- function(data) {
 # - time_series: 시계열 분석 적합성
 # - dimension: 차원 축소 적합성
 # - survival: 생존 분석 적합성
-# - textual: 텍스트 분석 적합성
 # ============================================================================
 
 evaluate_suitability <- function(quality_report, purpose) {
@@ -426,9 +425,8 @@ ui <- fluidPage(
                     "분류분석" = "classification",
                     "군집분석" = "cluster",
                     "시계열 분석" = "time_series",
-                    "차원 축소 / 변수 구조 탐색" = "dimmension",
-                    "생존 분석" = "survival",
-                    "텍스트 / 자연어 분석" = "textual"
+                    "차원 축소 / 변수 구조 탐색" = "dimension",
+                    "생존 분석" = "survival"
                   ),
                   selected = ""
                 ),
@@ -581,14 +579,11 @@ server <- function(input, output, session) {
     advanced_ml = list(
       icon = "🔬",
       title = "통계적 검정 / 가설 검정",
-      description = "집단 간 차이나 변수 간 관계가 통계적으로 의미 있는지 확인하고 싶어요",
-      explain = "t-검정, ANOVA, 카이제곱검정 등을 통해 통계적 유의성을 검증합니다.",
-      keywords = c("p-값", "신뢰도", "유의성", "가설검정"),
+      description = "집단 간 차이 검정",
+      explain = "t-test, ANOVA 등 수행",
+      keywords = c("p-value", "검정"),
       requires_variable_selection = TRUE,
-      variable_types = list(
-        explanatory = "numeric_or_character",
-        response = "numeric"
-      )
+      requires_test_selection = TRUE
     ),
     correlation = list(
       icon = "🔗",
@@ -648,7 +643,7 @@ server <- function(input, output, session) {
         value = "numeric"
       )
     ),
-    dimmension = list(
+    dimension = list(
       icon = "🔍",
       title = "차원 축소 / 변수 구조 탐색",
       description = "여러 변수를 요약해 핵심 구조를 파악하고 싶어요",
@@ -671,19 +666,67 @@ server <- function(input, output, session) {
         event = "numeric_or_character",
         covariate = "numeric_or_character"
       )
-    ),
-    textual = list(
-      icon = "📝",
-      title = "텍스트 / 자연어 분석",
-      description = "문자형 데이터나 문장 데이터를 분석하고 싶어요",
-      explain = "단어 빈도, 감정 분석, 토픽 모델링 등을 통해 텍스트 데이터에서 의미 있는 정보를 추출합니다.",
-      keywords = c("단어", "감정", "토픽", "텍스트마이닝"),
-      requires_variable_selection = TRUE,
-      variable_types = list(
-        text = "character"
-      )
     )
   )
+  
+# ============================================================================
+#   검정 종류 선택 
+# ============================================================================
+  
+  output$variable_selection_output <- renderUI({
+    
+    if (input$analysis_purpose != "advanced_ml") return(NULL)
+    
+    fluidRow(
+      column(12,
+             div(class = "variable-selector-box",
+                 
+                 selectInput(
+                   "test_type",
+                   "검정 유형:",
+                   choices = c(
+                     "-- 선택하세요 --" = "",
+                     "평균 검정" = "mean_test",
+                     "카이제곱 검정" = "chi_square",
+                     "상관 검정" = "correlation_test"
+                   )
+                 ),
+                 
+                 uiOutput("test_variable_selection_output")
+             )
+      )
+    )
+  })
+  
+  # ============================================================================
+  #   변수 선택 
+  # ============================================================================ 
+  
+  output$test_variable_selection_output <- renderUI({
+    
+    req(data_store$original_data)
+    req(input$test_type)
+    
+    numeric_vars <- names(data_store$original_data)[
+      sapply(data_store$original_data, is.numeric)
+    ]
+    
+    character_vars <- names(data_store$original_data)[
+      sapply(data_store$original_data, is.character)
+    ]
+    
+    if (input$test_type == "mean_test") {
+      fluidRow(
+        column(6,
+               radioButtons("group_var", "그룹 변수", character_vars)
+        ),
+        column(6,
+               radioButtons("value_var", "값 변수", numeric_vars)
+        )
+      )
+    }
+  })
+  
   
   # ============================================================================
   # 1. 파일 업로드 처리
@@ -779,6 +822,50 @@ server <- function(input, output, session) {
     
     # 분석별로 다른 UI 구성
     variable_ui <- switch(input$analysis_purpose,
+      # ============================================================
+      # 통계적 검정: 검정 유형 선택
+      # ============================================================
+      advanced_ml = {
+        fluidRow(
+          column(12,
+            div(class = "variable-selector-box",
+              div(class = "variable-selector-title", "🔬 통계적 검정 설정"),
+              
+              # 검정 유형 선택
+              fluidRow(
+                column(12,
+                  p(strong("1️⃣ 검정 유형 선택")),
+                  p("데이터 특성에 맞는 검정을 선택하세요."),
+                  selectInput(
+                    "test_type",
+                    "검정 유형:",
+                    choices = list(
+                      "-- 선택하세요 --" = "",
+                      "📊 평균 검정 (그룹 간 평균 비교)" = "mean_test",
+                      "✅ 범주형 독립성 검정 (범주형 변수 관계)" = "chi_square",
+                      "🔗 상관 검정 (연속형 변수 관계)" = "correlation_test"
+                    ),
+                    selected = ""
+                  ),
+                  uiOutput("test_description_output")
+                )
+              ),
+              
+              hr(),
+              
+              # 변수 선택 (검정 유형에 따라 다름)
+              fluidRow(
+                column(12,
+                  p(strong("2️⃣ 변수 선택")),
+                  p("선택한 검정에 필요한 변수를 선택하세요."),
+                  uiOutput("test_variable_selection_output")
+                )
+              )
+            )
+          )
+        )
+      },
+      
       # ============================================================
       # 상관관계 분석: 여러 수치형 변수 선택
       # ============================================================
@@ -937,7 +1024,7 @@ server <- function(input, output, session) {
       # ============================================================
       # 차원 축소: 여러 수치형 변수 선택
       # ============================================================
-      dimmension = {
+      dimension = {
         fluidRow(
           column(12,
             div(class = "variable-selector-box",
@@ -996,26 +1083,6 @@ server <- function(input, output, session) {
                     selected = NULL
                   )
                 )
-              )
-            )
-          )
-        )
-      },
-      
-      # ============================================================
-      # 텍스트 분석: 문자형 변수 선택
-      # ============================================================
-      textual = {
-        fluidRow(
-          column(12,
-            div(class = "variable-selector-box",
-              div(class = "variable-selector-title", "📝 텍스트 분석 변수 선택"),
-              p("분석할 문자형(텍스트) 변수를 선택하세요."),
-              checkboxGroupInput(
-                "text_variables",
-                "텍스트 변수:",
-                choices = character_vars,
-                selected = NULL
               )
             )
           )
@@ -1249,6 +1316,166 @@ server <- function(input, output, session) {
         sum(sapply(data_store$original_data, is.character)),
         sum(sapply(data_store$original_data, function(x) inherits(x, "Date")))
       )
+    )
+  })
+  
+  # ============================================================================
+  # 검정 유형별 설명 출력
+  # ============================================================================
+  output$test_description_output <- renderUI({
+    if (input$test_type == "" || is.null(input$test_type)) {
+      return(div(style = "color: #999; margin-top: 10px;",
+        "검정 유형을 선택하면 설명이 여기 나타납니다."
+      ))
+    }
+    
+    test_descriptions <- list(
+      mean_test = list(
+        description = "두 개 이상의 그룹 간 평균의 차이가 통계적으로 유의미한지 검정합니다.",
+        conditions = "• 두 그룹: t-검정 사용",
+        conditions2 = "• 세 개 이상 그룹: ANOVA 사용",
+        use_case = "예) 남녀 학생의 수학점수 비교 또는 A, B, C 처리 방법의 효과 비교"
+      ),
+      chi_square = list(
+        description = "두 개의 범주형 변수 간의 독립성을 검정합니다 (관계가 있는지 없는지).",
+        conditions = "• 범주형 변수 2개 필요",
+        conditions2 = "• 기대도수 ≥ 5 (각 셀)",
+        use_case = "예) 성별과 선호도의 관계, 지역과 구매 의사의 관계"
+      ),
+      correlation_test = list(
+        description = "두 개의 연속형(수치형) 변수 간의 선형 관계가 통계적으로 유의미한지 검정합니다.",
+        conditions = "• 연속형 변수 2개 필요",
+        conditions2 = "• Pearson 상관계수 또는 Spearman 순위상관계수 사용",
+        use_case = "예) 키와 몸무게의 관계, 공부시간과 시험점수의 관계"
+      )
+    )
+    
+    if (!is.null(test_descriptions[[input$test_type]])) {
+      desc <- test_descriptions[[input$test_type]]
+      div(
+        style = "background-color: #e3f2fd; border-left: 4px solid #2196F3; padding: 15px; margin-top: 10px; border-radius: 4px;",
+        p(strong("📖 설명:"), desc$description),
+        p(strong("방법:"), br(), desc$conditions),
+        p(desc$conditions2),
+        p(strong("사용 예:"), desc$use_case)
+      )
+    }
+  })
+  
+  # ============================================================================
+  # 검정 유형별 변수 선택 UI
+  # ============================================================================
+  output$test_variable_selection_output <- renderUI({
+    if (is.null(data_store$original_data)) {
+      return(NULL)
+    }
+    
+    if (input$test_type == "" || is.null(input$test_type)) {
+      return(NULL)
+    }
+    
+    numeric_vars <- names(data_store$original_data)[
+      sapply(data_store$original_data, is.numeric)
+    ]
+    character_vars <- names(data_store$original_data)[
+      sapply(data_store$original_data, is.character)
+    ]
+    
+    switch(input$test_type,
+      # 평균 검정
+      mean_test = {
+        fluidRow(
+          column(6,
+            div(style = "background-color: #f5f5f5; padding: 15px; border-radius: 4px;",
+              p(strong("📌 그룹 변수 (설명변수)")),
+              p("비교하려는 그룹을 나타내는 범주형 변수"),
+              p("예) 성별 (남/여), 처리방법 (A/B/C)"),
+              radioButtons(
+                "mean_group",
+                "그룹변수 선택:",
+                choices = character_vars,
+                selected = NULL
+              )
+            )
+          ),
+          column(6,
+            div(style = "background-color: #f5f5f5; padding: 15px; border-radius: 4px;",
+              p(strong("📌 값 변수 (반응변수)")),
+              p("비교하려는 측정값으로 수치형 변수"),
+              p("예) 수학점수, 몸무게, 혈압"),
+              radioButtons(
+                "mean_value",
+                "값변수 선택:",
+                choices = numeric_vars,
+                selected = NULL
+              )
+            )
+          )
+        )
+      },
+      # 범주형 독립성 검정
+      chi_square = {
+        fluidRow(
+          column(6,
+            div(style = "background-color: #f5f5f5; padding: 15px; border-radius: 4px;",
+              p(strong("📌 변수 1 (범주형)")),
+              p("첫 번째 범주형 변수"),
+              p("예) 성별, 지역, 학년"),
+              radioButtons(
+                "chi_var1",
+                "변수1 선택:",
+                choices = character_vars,
+                selected = NULL
+              )
+            )
+          ),
+          column(6,
+            div(style = "background-color: #f5f5f5; padding: 15px; border-radius: 4px;",
+              p(strong("📌 변수 2 (범주형)")),
+              p("두 번째 범주형 변수"),
+              p("예) 선호도, 구매의사, 만족도"),
+              radioButtons(
+                "chi_var2",
+                "변수2 선택:",
+                choices = character_vars,
+                selected = NULL
+              )
+            )
+          )
+        )
+      },
+      # 상관 검정
+      correlation_test = {
+        fluidRow(
+          column(6,
+            div(style = "background-color: #f5f5f5; padding: 15px; border-radius: 4px;",
+              p(strong("📌 변수 1 (연속형)")),
+              p("첫 번째 수치형 변수"),
+              p("예) 키, 공부시간, 광고비"),
+              radioButtons(
+                "corr_var1",
+                "변수1 선택:",
+                choices = numeric_vars,
+                selected = NULL
+              )
+            )
+          ),
+          column(6,
+            div(style = "background-color: #f5f5f5; padding: 15px; border-radius: 4px;",
+              p(strong("📌 변수 2 (연속형)")),
+              p("두 번째 수치형 변수"),
+              p("예) 몸무게, 시험점수, 판매액"),
+              radioButtons(
+                "corr_var2",
+                "변수2 선택:",
+                choices = numeric_vars,
+                selected = NULL
+              )
+            )
+          )
+        )
+      },
+      NULL
     )
   })
   
