@@ -47,3 +47,13 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Generated reports
+reports/*.html
+reports/*.pdf
+reports/*.docx
+!reports/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db

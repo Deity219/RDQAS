@@ -1,0 +1,8 @@
+library(shiny)
+library(shinyBS)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(rmarkdown)
+library(readxl)
