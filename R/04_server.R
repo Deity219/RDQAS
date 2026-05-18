@@ -881,10 +881,12 @@ server <- function(input, output, session) {
       req(data_store$original_data)
       
       generate_html_report(
-        file = file,
-        data = data_store$original_data,
-        report = data_store$quality_report,
-        suitability = data_store$suitability
+        file        = file,
+        data        = data_store$original_data,
+        report      = data_store$quality_report,
+        suitability = data_store$suitability,
+        purpose     = input$analysis_purpose,
+        filename    = input$file_upload$name
       )
     }
   )
