@@ -103,6 +103,39 @@ generate_html_report <- function(file, data, report, suitability,
     )
   }
   
+  # suitability가 NULL이거나 구조가 잘못된 경우 기본값으로 대체
+  if (is.null(suitability) || is.null(suitability$status)) {
+    suitability <- list(
+      status          = "평가 미완료",
+      color           = "secondary",
+      message         = "적합성 평가 결과가 없습니다.",
+      recommendations = character()
+    )
+  }
+  
+  # suitability$status → 점수 변환 (도넛 차트용)
+  suit_score <- function(status) {
+    switch(as.character(status),
+           "적합"      = 100,
+           "부분 적합" = 60,
+           "부적합"    = 20,
+           "미선택"    = NA,
+           "평가 미완료" = NA,
+           NA
+    )
+  }
+  
+  # suitability$color → 도넛 색상 매핑
+  suit_donut_color <- function(color) {
+    switch(color,
+           success   = "#1D9E75",
+           warning   = "#f5821d",
+           danger    = "#E24B4A",
+           info      = "#2196F3",
+           "#aaaaaa"
+    )
+  }
+  
   # suitability$color → CSS 클래스 색상 매핑
   suit_bg_color <- function(color) {
     switch(color,
@@ -220,7 +253,14 @@ generate_html_report <- function(file, data, report, suitability,
   
   # 수치형 변수 박스플롯 (수치형 변수 있을 때만)
   boxplot_tag <- ""
-  num_cols <- names(data)[sapply(data, is.numeric)]
+  num_cols <- if (!is.null(report$variable_types) &&
+                  "variable_type" %in% names(report$variable_types)) {
+    report$variable_types$variable[
+      report$variable_types$variable_type == "수치형 변수"
+    ]
+  } else {
+    names(data)[sapply(data, is.numeric)]
+  }
   if (length(num_cols) > 0) {
     plot_df <- data[, num_cols, drop = FALSE]
     plot_long <- tidyr::pivot_longer(
@@ -436,25 +476,34 @@ generate_html_report <- function(file, data, report, suitability,
     .metric-label { font-size: 12px; color: #888; margin-bottom: 6px; }
     .metric-value { font-size: 26px; font-weight: bold; color: #333; }
     .metric-value.warn { color: #E24B4A; }
+    /* 도넛 두 개 나란히 */
+    .donut-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
     /* 도넛 차트 영역 */
     .score-donut-wrap {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 32px;
-      padding: 20px 24px;
+      gap: 12px;
+      padding: 20px 16px;
       background: #f8f9fa;
       border-radius: 8px;
-      border-left: 5px solid ', s_color, ';
+      border-top: 5px solid ', s_color, ';
       margin-bottom: 16px;
+      text-align: center;
     }
     .donut-chart { flex-shrink: 0; }
-    .donut-info  { flex: 1; }
+    .donut-info  { width: 100%; }
     .donut-grade {
-      font-size: 20px;
+      font-size: 16px;
       font-weight: bold;
-      margin-bottom: 14px;
+      word-break: keep-all;
     }
-    .donut-legend { font-size: 13px; color: #555; line-height: 2; }
+    .donut-legend { font-size: 12px; color: #555; line-height: 2; word-break: keep-all; }
     .legend-dot {
       display: inline-block;
       width: 10px; height: 10px;
@@ -494,6 +543,36 @@ generate_html_report <- function(file, data, report, suitability,
       .report-header h1 { color: white !important; }
       .report-meta { color: white !important; opacity: 1 !important; }
       .report-meta span { color: white !important; }
+      /* 도넛 두 개 나란히 고정 */
+      .donut-pair {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 16px !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .score-donut-wrap {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        text-align: center !important;
+        page-break-inside: avoid !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .donut-chart {
+        flex-shrink: 0 !important;
+      }
+      .donut-grade {
+        font-size: 14px !important;
+        word-break: keep-all !important;
+        white-space: normal !important;
+      }
+      .donut-legend {
+        font-size: 11px !important;
+        line-height: 1.8 !important;
+        word-break: keep-all !important;
+      }
     }
     /* 경고 박스 */
     .warn-box {
@@ -593,28 +672,66 @@ generate_html_report <- function(file, data, report, suitability,
         </div>
       </div>
 
-      <!-- 품질 종합 점수 — 도넛 차트 -->
-      <div class="score-donut-wrap">
-        <div class="donut-chart">',
+      <!-- 품질 종합 점수 + 분석 적합성 — 도넛 차트 두 개 나란히 -->
+      <div class="donut-pair">
+
+        <!-- 데이터 품질 점수 -->
+        <div class="score-donut-wrap" style="border-top-color:', s_color, ';">
+          <div class="donut-grade" style="color:', s_color, ';">
+            데이터 품질 점수 — ', grade, '
+          </div>
+          <div class="donut-chart">',
                  make_donut_svg(score, s_color),
                  '</div>
-        <div class="donut-info">
-          <div class="donut-grade" style="color:', s_color, ';">
-            품질 종합 점수 — ', grade, '
-          </div>
           <div class="donut-legend">
-            <span class="legend-dot" style="background:#1D9E75;"></span>90~100점 우수&nbsp;&nbsp;
-            <span class="legend-dot" style="background:#2196F3;"></span>70~89점 양호&nbsp;&nbsp;
-            <span class="legend-dot" style="background:#f5821d;"></span>50~69점 주의&nbsp;&nbsp;
-            <span class="legend-dot" style="background:#E24B4A;"></span>0~49점 부적합
+            <span class="legend-dot" style="background:#1D9E75;"></span>90~100 우수<br>
+            <span class="legend-dot" style="background:#2196F3;"></span>70~89 양호<br>
+            <span class="legend-dot" style="background:#f5821d;"></span>50~69 주의<br>
+            <span class="legend-dot" style="background:#E24B4A;"></span>0~49 부적합
           </div>
         </div>
-      </div>
+
+        <!-- 분석 적합성 점수 -->',
+                 {
+                   s_val   <- suit_score(suitability$status)
+                   s_col   <- suit_donut_color(suitability$color)
+                   s_label <- suitability$status
+                   
+                   if (is.na(s_val)) {
+                     paste0("
+        <div class='score-donut-wrap' style='border-top-color:#aaaaaa;'>
+          <div class='donut-grade' style='color:#aaaaaa;'>
+            분석 적합성 — ", esc(s_label), "
+          </div>
+          <div class='donut-chart'>",
+                            make_donut_svg(0, "#aaaaaa"),
+                            "</div>
+          <div class='donut-legend' style='color:#aaaaaa;'>분석 목적을 선택하면 평가됩니다.</div>
+        </div>")
+                   } else {
+                     paste0("
+        <div class='score-donut-wrap' style='border-top-color:", s_col, ";'>
+          <div class='donut-grade' style='color:", s_col, ";'>
+            분석 적합성 — ", esc(s_label), "
+          </div>
+          <div class='donut-chart'>",
+                            make_donut_svg(s_val, s_col),
+                            "</div>
+          <div class='donut-legend'>
+            <span class='legend-dot' style='background:#1D9E75;'></span>적합<br>
+            <span class='legend-dot' style='background:#f5821d;'></span>부분 적합<br>
+            <span class='legend-dot' style='background:#E24B4A;'></span>부적합
+          </div>
+        </div>")
+                   }
+                 },
+                 '
+      </div><!-- /donut-pair -->
     </div>
 
-    <!-- 2. 품질 진단 상세 -->
+    <!-- 2. 데이터 품질 평가 -->
     <div class="section">
-      <div class="section-title">2. 품질 진단 상세</div>
+      <div class="section-title">2. 데이터 품질 평가</div>
 
       <!-- 결측치 -->
       <p><strong>🔹 결측치</strong></p>',
@@ -684,9 +801,28 @@ generate_html_report <- function(file, data, report, suitability,
                  '
     </div>
 
-    <!-- 3. 컬럼별 품질 상세 -->
+    <!-- 3. 분석 적합성 평가 -->
     <div class="section">
-      <div class="section-title">3. 컬럼별 품질 상세</div>
+      <div class="section-title">3. 분석 적합성 평가</div>
+      <div style="', suit_bg_color(suitability$color), '
+                   padding:18px 22px; border-radius:4px; margin-bottom:16px;">
+        <div style="font-size:18px; font-weight:bold; margin-bottom:8px;">
+          상태: ', esc(suitability$status), '
+        </div>
+        <div style="margin:8px 0;">', esc(suitability$message), '</div>',
+                 
+                 if (recs_html != "") paste0(
+                   '<div style="margin-top:12px;"><strong>권장사항:</strong>',
+                   recs_html, '</div>'
+                 ) else "",
+                 
+                 '
+      </div>
+    </div>
+
+    <!-- 4. 컬럼별 품질 상세 -->
+    <div class="section">
+      <div class="section-title">4. 컬럼별 품질 상세</div>
       <table>
         <thead>
           <tr>
@@ -701,9 +837,9 @@ generate_html_report <- function(file, data, report, suitability,
       </table>
     </div>
 
-    <!-- 4. 시각화 -->
+    <!-- 5. 시각화 -->
     <div class="section">
-      <div class="section-title">4. 시각화</div>
+      <div class="section-title">5. 시각화</div>
 
       <div class="viz-block">
         <div class="viz-title"> 결측값 분포</div>',
@@ -719,25 +855,6 @@ generate_html_report <- function(file, data, report, suitability,
                  
                  if (boxplot_tag != "") boxplot_tag
                  else "<p style='color:#999;'>수치형 변수가 없습니다.</p>",
-                 
-                 '
-      </div>
-    </div>
-
-    <!-- 5. 적합성 평가 -->
-    <div class="section">
-      <div class="section-title">5. 적합성 평가</div>
-      <div style="', suit_bg_color(suitability$color), '
-                   padding:18px 22px; border-radius:4px; margin-bottom:16px;">
-        <div style="font-size:18px; font-weight:bold; margin-bottom:8px;">
-          상태: ', esc(suitability$status), '
-        </div>
-        <div style="margin:8px 0;">', esc(suitability$message), '</div>',
-                 
-                 if (recs_html != "") paste0(
-                   '<div style="margin-top:12px;"><strong>권장사항:</strong>',
-                   recs_html, '</div>'
-                 ) else "",
                  
                  '
       </div>

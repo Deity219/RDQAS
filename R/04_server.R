@@ -675,8 +675,31 @@ server <- function(input, output, session) {
     data_store$quality_report <- assess_data_quality(data_store$original_data)
     
     data_store$suitability <- evaluate_suitability(
-      data_store$quality_report,
-      input$analysis_purpose
+      quality_report = data_store$quality_report,
+      purpose        = input$analysis_purpose,
+      data           = data_store$original_data,
+      selected_vars  = list(
+        # EDA / 기초통계 / 범주형 / 상관 / 차원축소
+        selected_vars      = input$eda_vars,
+        variables          = input$eda_vars,
+        # 가설 검정
+        group_var          = input$mean_group,
+        group_variable     = input$mean_group,
+        # 회귀 / 분류 공통
+        response_var       = input$reg_response   %||% input$class_response,
+        y_var              = input$reg_response   %||% input$class_response,
+        predictor_vars     = input$reg_explanatory %||% input$class_explanatory,
+        x_vars             = input$reg_explanatory %||% input$class_explanatory,
+        # 군집
+        cluster_vars       = input$cluster_variables,
+        # 시계열
+        time_var           = input$ts_time,
+        analysis_vars      = input$ts_value,
+        # 생존
+        survival_time_var  = input$surv_time,
+        event_var          = input$surv_event,
+        covariates         = input$surv_covariate
+      )
     )
     
     updateTabsetPanel(session, "main_tabs", selected = "Step 2: 진단 결과")
@@ -715,6 +738,24 @@ server <- function(input, output, session) {
     type_df    <- report$details$type$details$type_issue_table
     dup_count  <- report$details$duplicate$details$duplicate_count
     major_issues <- report$major_issues
+    
+    # 분석 목적 한글 레이블
+    purpose_labels <- c(
+      basic_stats    = "기초 통계 분석",
+      visualization  = "범주형 변수 빈도 분석",
+      advanced_ml    = "통계적 검정 / 가설 검정",
+      correlation    = "상관관계 분석",
+      regression     = "회귀분석",
+      classification = "분류분석",
+      cluster        = "군집분석",
+      time_series    = "시계열 분석",
+      dimension      = "차원 축소 / 변수 구조 탐색",
+      survival       = "생존 분석"
+    )
+    p_label <- if (!is.null(input$analysis_purpose) &&
+                   input$analysis_purpose %in% names(purpose_labels))
+      purpose_labels[[input$analysis_purpose]]
+    else "미선택"
     
     list(
       # ------------------------------------------------------------------
@@ -855,24 +896,53 @@ server <- function(input, output, session) {
       # 적합성 평가
       # ------------------------------------------------------------------
       fluidRow(
-        column(12, div(class = "section-title", "📋 적합성 평가"))
+        column(12, div(class = "section-title", "📋 분석 적합성 평가"))
       ),
+      
+      # 적합성 점수
       fluidRow(
+        column(4,
+               div(class = "quality-score-display",
+                   style = switch(suitability$color,
+                                  success   = "color:#1D9E75;",
+                                  warning   = "color:#f5821d;",
+                                  danger    = "color:#E24B4A;",
+                                  "color:#aaaaaa;"
+                   ),
+                   suitability$status
+               )
+        ),
         column(8,
-               div(class = paste("suitability-box", suitability$color),
-                   div(class = "suitability-status", "상태: ", suitability$status),
-                   div(class = "suitability-message", suitability$message),
-                   if (length(suitability$recommendations) > 0) {
-                     div(class = "suitability-recommendations",
-                         strong("권장사항:"),
-                         div(class = "recommendation-item",
-                             lapply(suitability$recommendations, function(rec) div(rec))
-                         )
-                     )
-                   }
+               div(
+                 p(strong("평가 기준: "),
+                   "적합 / 부분 적합 / 부적합"),
+                 p(strong("분석 목적: "), p_label)
                )
         )
       ),
+      
+      # 평가 메시지
+      fluidRow(
+        column(12,
+               div(class = paste("suitability-box", suitability$color),
+                   div(class = "suitability-status",
+                       HTML(paste0("📌 ", suitability$message)))
+               )
+        )
+      ),
+      
+      # 권장사항 항목별 박스
+      if (length(suitability$recommendations) > 0) {
+        fluidRow(
+          column(12,
+                 div(class = "warning-box-title", "💡 권장사항"),
+                 lapply(suitability$recommendations, function(rec) {
+                   div(class = "warning-box",
+                       div(class = "warning-box-content", rec))
+                 })
+          )
+        )
+      },
       
       # ------------------------------------------------------------------
       # 데이터셋 정보
