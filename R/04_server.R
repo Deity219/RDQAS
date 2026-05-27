@@ -234,6 +234,11 @@ server <- function(input, output, session) {
       sapply(data_store$original_data, function(x) inherits(x, "Date"))
     ]
     
+    # 빈 경우 안내 메시지용 더미값
+    if (length(numeric_vars) == 0)   numeric_vars   <- c("수치형 변수 없음" = "")
+    if (length(character_vars) == 0) character_vars <- c("범주형 변수 없음" = "")
+    if (length(date_vars) == 0)      date_vars      <- c("날짜형 변수 없음" = "")
+    
     variable_ui <- switch(
       input$analysis_purpose,
       
@@ -548,6 +553,10 @@ server <- function(input, output, session) {
       sapply(data_store$original_data, is.character)
     ]
     
+    # 빈 경우 안내 메시지용 더미값
+    if (length(numeric_vars) == 0)   numeric_vars   <- c("수치형 변수 없음" = "")
+    if (length(character_vars) == 0) character_vars <- c("범주형 변수 없음" = "")
+    
     switch(
       input$test_type,
       
@@ -666,8 +675,31 @@ server <- function(input, output, session) {
     data_store$quality_report <- assess_data_quality(data_store$original_data)
     
     data_store$suitability <- evaluate_suitability(
-      data_store$quality_report,
-      input$analysis_purpose
+      quality_report = data_store$quality_report,
+      purpose        = input$analysis_purpose,
+      data           = data_store$original_data,
+      selected_vars  = list(
+        # EDA / 기초통계 / 범주형 / 상관 / 차원축소
+        selected_vars      = input$eda_vars,
+        variables          = input$eda_vars,
+        # 가설 검정
+        group_var          = input$mean_group,
+        group_variable     = input$mean_group,
+        # 회귀 / 분류 공통
+        response_var       = input$reg_response   %||% input$class_response,
+        y_var              = input$reg_response   %||% input$class_response,
+        predictor_vars     = input$reg_explanatory %||% input$class_explanatory,
+        x_vars             = input$reg_explanatory %||% input$class_explanatory,
+        # 군집
+        cluster_vars       = input$cluster_variables,
+        # 시계열
+        time_var           = input$ts_time,
+        analysis_vars      = input$ts_value,
+        # 생존
+        survival_time_var  = input$surv_time,
+        event_var          = input$surv_event,
+        covariates         = input$surv_covariate
+      )
     )
     
     updateTabsetPanel(session, "main_tabs", selected = "Step 2: 진단 결과")
@@ -694,102 +726,120 @@ server <- function(input, output, session) {
       )
     }
     
-    report <- data_store$quality_report
+    report      <- data_store$quality_report
     suitability <- data_store$suitability
     
+    # assess_data_quality() 반환 구조에서 필요한 데이터 추출
+    score      <- report$total_score
+    missing_df <- report$details$missing$details$variable_missing
+    missing_df <- missing_df[missing_df$missing_count > 0, ]
+    outlier_df <- report$details$outlier$details$outlier_table
+    outlier_df <- outlier_df[outlier_df$outlier_count > 0, ]
+    type_df    <- report$details$type$details$type_issue_table
+    dup_count  <- report$details$duplicate$details$duplicate_count
+    major_issues <- report$major_issues
+    
+    # 분석 목적 한글 레이블
+    purpose_labels <- c(
+      basic_stats    = "기초 통계 분석",
+      visualization  = "범주형 변수 빈도 분석",
+      advanced_ml    = "통계적 검정 / 가설 검정",
+      correlation    = "상관관계 분석",
+      regression     = "회귀분석",
+      classification = "분류분석",
+      cluster        = "군집분석",
+      time_series    = "시계열 분석",
+      dimension      = "차원 축소 / 변수 구조 탐색",
+      survival       = "생존 분석"
+    )
+    p_label <- if (!is.null(input$analysis_purpose) &&
+                   input$analysis_purpose %in% names(purpose_labels))
+      purpose_labels[[input$analysis_purpose]]
+    else "미선택"
+    
     list(
+      # ------------------------------------------------------------------
+      # 품질 점수
+      # ------------------------------------------------------------------
       fluidRow(
-        column(12,
-               div(class = "section-title", "📈 데이터 품질 점수")
-        )
+        column(12, div(class = "section-title", "📈 데이터 품질 점수"))
       ),
       fluidRow(
         column(4,
-               div(class = "quality-score-display",
-                   report$score, "점"
-               )
+               div(class = "quality-score-display", score, "점")
         ),
         column(8,
                div(
                  p("총 100점 중 획득한 점수입니다."),
-                 p(
-                   strong("평가 기준: "),
-                   "90~100점 (우수), 70~89점 (양호), 50~69점 (주의), 0~49점 (부진)"
-                 )
+                 p(strong("평가 기준: "),
+                   "90~100점 (우수), 70~89점 (양호), 50~69점 (주의), 0~49점 (부적합)")
                )
         )
       ),
       
+      # ------------------------------------------------------------------
+      # 주요 경고
+      # ------------------------------------------------------------------
       fluidRow(
-        column(12,
-               div(class = "section-title", "⚠️ 주요 경고")
-        )
+        column(12, div(class = "section-title", "⚠️ 주요 경고"))
       ),
       
-      if (nrow(report$missing) > 0) {
-        fluidRow(
-          column(12,
+      # 결측치
+      fluidRow(
+        column(12,
+               if (!is.null(missing_df) && nrow(missing_df) > 0) {
                  div(class = "warning-box",
                      div(class = "warning-box-title", "❌ 결측치 발견"),
-                     lapply(1:nrow(report$missing), function(i) {
-                       row <- report$missing[i, ]
-                       
+                     lapply(seq_len(nrow(missing_df)), function(i) {
+                       row <- missing_df[i, ]
                        div(class = "warning-box-content",
                            HTML(paste0(
                              "<strong>", row$variable, "</strong> 변수에 ",
-                             row$missing_percent, "% (", row$missing_count, "개)의 결측치가 존재합니다."
+                             row$missing_percent, "% (", row$missing_count,
+                             "개)의 결측치가 존재합니다."
                            ))
                        )
                      })
                  )
-          )
-        )
-      } else {
-        fluidRow(
-          column(12,
+               } else {
                  div(class = "warning-box",
-                     div(class = "warning-box-content", "✅ 결측치가 없습니다.")
-                 )
-          )
+                     div(class = "warning-box-content", "✅ 결측치가 없습니다."))
+               }
         )
-      },
+      ),
       
-      if (nrow(report$outliers) > 0) {
-        fluidRow(
-          column(12,
+      # 이상치
+      fluidRow(
+        column(12,
+               if (!is.null(outlier_df) && nrow(outlier_df) > 0) {
                  div(class = "warning-box",
                      div(class = "warning-box-title", "❌ 이상치 발견"),
-                     lapply(1:nrow(report$outliers), function(i) {
-                       row <- report$outliers[i, ]
-                       
+                     lapply(seq_len(nrow(outlier_df)), function(i) {
+                       row <- outlier_df[i, ]
                        div(class = "warning-box-content",
                            HTML(paste0(
                              "<strong>", row$variable, "</strong> 변수에서 ",
-                             row$outlier_percent, "% (", row$outlier_count, "개)의 이상치가 발견되었습니다."
+                             row$outlier_percent, "% (", row$outlier_count,
+                             "개)의 이상치가 발견되었습니다."
                            ))
                        )
                      })
                  )
-          )
-        )
-      } else {
-        fluidRow(
-          column(12,
+               } else {
                  div(class = "warning-box",
-                     div(class = "warning-box-content", "✅ 이상치가 없습니다.")
-                 )
-          )
+                     div(class = "warning-box-content", "✅ 이상치가 없습니다."))
+               }
         )
-      },
+      ),
       
-      if (nrow(report$format) > 0) {
-        fluidRow(
-          column(12,
+      # 자료형 오류
+      fluidRow(
+        column(12,
+               if (!is.null(type_df) && nrow(type_df) > 0) {
                  div(class = "warning-box",
-                     div(class = "warning-box-title", "❌ 값 형식 일관성 문제"),
-                     lapply(1:nrow(report$format), function(i) {
-                       row <- report$format[i, ]
-                       
+                     div(class = "warning-box-title", "❌ 자료형 오류 의심 변수"),
+                     lapply(seq_len(nrow(type_df)), function(i) {
+                       row <- type_df[i, ]
                        div(class = "warning-box-content",
                            HTML(paste0(
                              "<strong>", row$variable, "</strong> 변수: ", row$issue
@@ -797,46 +847,106 @@ server <- function(input, output, session) {
                        )
                      })
                  )
-          )
+               } else {
+                 div(class = "warning-box",
+                     div(class = "warning-box-content", "✅ 자료형 오류가 없습니다."))
+               }
         )
-      } else {
+      ),
+      
+      # 중복 행
+      if (!is.null(dup_count) && dup_count > 0) {
         fluidRow(
           column(12,
                  div(class = "warning-box",
-                     div(class = "warning-box-content", "✅ 형식 일관성이 좋습니다.")
+                     div(class = "warning-box-title", "❌ 중복 행 발견"),
+                     div(class = "warning-box-content",
+                         HTML(paste0("총 <strong>", dup_count,
+                                     "건</strong>의 중복 행이 존재합니다. ",
+                                     "분석 목적에 따라 중복 제거 여부를 결정하세요."))
+                     )
                  )
           )
         )
       },
       
-      fluidRow(
-        column(12,
-               div(class = "section-title", "📋 적합성 평가")
+      # ------------------------------------------------------------------
+      # 주요 이슈 요약
+      # ------------------------------------------------------------------
+      if (!is.null(major_issues) && nrow(major_issues) > 0 &&
+          !(nrow(major_issues) == 1 && major_issues$문제항목[1] == "없음")) {
+        fluidRow(
+          column(12,
+                 div(class = "section-title", "📋 주요 이슈 요약"),
+                 lapply(seq_len(nrow(major_issues)), function(i) {
+                   r <- major_issues[i, ]
+                   box_class <- if (r$상태 == "위험") "warning-box" else "warning-box"
+                   icon <- if (r$상태 == "위험") "⚠️" else "🔔"
+                   div(class = box_class,
+                       div(class = "warning-box-title",
+                           HTML(paste0(icon, " [", r$상태, "] ", r$문제항목))),
+                       div(class = "warning-box-content", r$설명)
+                   )
+                 })
+          )
         )
-      ),
+      },
+      
+      # ------------------------------------------------------------------
+      # 적합성 평가
+      # ------------------------------------------------------------------
       fluidRow(
+        column(12, div(class = "section-title", "📋 분석 적합성 평가"))
+      ),
+      
+      # 적합성 점수
+      fluidRow(
+        column(4,
+               div(class = "quality-score-display",
+                   style = switch(suitability$color,
+                                  success   = "color:#1D9E75;",
+                                  warning   = "color:#f5821d;",
+                                  danger    = "color:#E24B4A;",
+                                  "color:#aaaaaa;"
+                   ),
+                   suitability$status
+               )
+        ),
         column(8,
-               div(class = paste("suitability-box", suitability$color),
-                   div(class = "suitability-status",
-                       "상태: ", suitability$status
-                   ),
-                   div(class = "suitability-message",
-                       suitability$message
-                   ),
-                   if (length(suitability$recommendations) > 0) {
-                     div(class = "suitability-recommendations",
-                         strong("권장사항:"),
-                         div(class = "recommendation-item",
-                             lapply(suitability$recommendations, function(rec) {
-                               div(rec)
-                             })
-                         )
-                     )
-                   }
+               div(
+                 p(strong("평가 기준: "),
+                   "적합 / 부분 적합 / 부적합"),
+                 p(strong("분석 목적: "), p_label)
                )
         )
       ),
       
+      # 평가 메시지
+      fluidRow(
+        column(12,
+               div(class = paste("suitability-box", suitability$color),
+                   div(class = "suitability-status",
+                       HTML(paste0("📌 ", suitability$message)))
+               )
+        )
+      ),
+      
+      # 권장사항 항목별 박스
+      if (length(suitability$recommendations) > 0) {
+        fluidRow(
+          column(12,
+                 div(class = "warning-box-title", "💡 권장사항"),
+                 lapply(suitability$recommendations, function(rec) {
+                   div(class = "warning-box",
+                       div(class = "warning-box-content", rec))
+                 })
+          )
+        )
+      },
+      
+      # ------------------------------------------------------------------
+      # 데이터셋 정보
+      # ------------------------------------------------------------------
       fluidRow(
         column(12,
                div(class = "section-title", "📊 데이터셋 정보"),
@@ -873,7 +983,12 @@ server <- function(input, output, session) {
   
   output$download_report <- downloadHandler(
     filename = function() {
-      paste0("RDQAS_Report_", Sys.Date(), ".html")
+      base <- if (!is.null(input$file_upload$name)) {
+        tools::file_path_sans_ext(input$file_upload$name)
+      } else {
+        "데이터"
+      }
+      paste0("RDQAS_", base, "_", Sys.Date(), ".html")
     },
     content = function(file) {
       req(data_store$quality_report)
@@ -881,10 +996,12 @@ server <- function(input, output, session) {
       req(data_store$original_data)
       
       generate_html_report(
-        file = file,
-        data = data_store$original_data,
-        report = data_store$quality_report,
-        suitability = data_store$suitability
+        file        = file,
+        data        = data_store$original_data,
+        report      = data_store$quality_report,
+        suitability = data_store$suitability,
+        purpose     = input$analysis_purpose,
+        filename    = input$file_upload$name
       )
     }
   )

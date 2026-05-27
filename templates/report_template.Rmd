@@ -1,348 +1,370 @@
 ---
-title: "데이터 품질 및 적합성 평가 보고서"
-date: "`r format(Sys.time(), '%Y년 %m월 %d일 %H:%M')`"
+title: "RDQAS 데이터 품질 진단 보고서"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M')`"
 output:
   html_document:
     theme: flatly
     highlight: tango
-    toc: true
-    toc_float:
-      collapsed: false
-      smooth_scroll: true
-    toc_depth: 3
-    number_sections: false
+    toc: false
     self_contained: true
-    css: report_style.css
 params:
-  df:            NULL
-  score_result:  NULL
-  purpose:       "미입력"
-  filename:      "데이터"
+  df:          NULL
+  report:      NULL
+  suitability: NULL
+  purpose:     ""
+  filename:    "데이터"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
-                      fig.width = 8, fig.height = 4, dpi = 150)
+                      fig.width = 8, fig.height = 4, dpi = 120)
 library(ggplot2)
 library(dplyr)
+library(tidyr)
 library(knitr)
-library(kableExtra)
 
-df           <- params$df
-score_result <- params$score_result
-purpose      <- params$purpose
-filename     <- params$filename
+data        <- params$df
+report      <- params$report
+suitability <- params$suitability
+purpose     <- params$purpose
+filename    <- params$filename
 
-dim_labels <- c(
-  completeness = "완전성",
-  consistency  = "일관성",
-  uniqueness   = "유일성",
-  accuracy     = "정확성",
-  timeliness   = "적시성",
-  validity     = "유효성"
-)
+# --------------------------------------------------------------------------
+# assess_data_quality() 반환 구조에서 필요한 데이터 추출
+# --------------------------------------------------------------------------
+score      <- report$total_score
+n_dup_rows <- report$details$duplicate$details$duplicate_count
+major_issues <- report$major_issues
 
+missing_df <- report$details$missing$details$variable_missing
+missing_df <- missing_df[missing_df$missing_count > 0, ]
+
+outlier_df <- report$details$outlier$details$outlier_table
+outlier_df <- outlier_df[outlier_df$outlier_count > 0, ]
+
+type_df    <- report$details$type$details$type_issue_table
+
+# --------------------------------------------------------------------------
+# 헬퍼 함수
+# --------------------------------------------------------------------------
 score_color <- function(s) {
-  if (is.na(s))    return("#aaaaaa")
-  if (s >= 80)     return("#1D9E75")
-  if (s >= 60)     return("#BA7517")
+  if (is.na(s) || !is.numeric(s)) return("#aaaaaa")
+  if (s >= 90) return("#1D9E75")
+  if (s >= 70) return("#2196F3")
+  if (s >= 50) return("#f5821d")
   return("#E24B4A")
 }
 
-badge_class <- function(status) {
-  switch(status,
-    ok   = "badge-ok",
-    warn = "badge-warn",
-    fail = "badge-fail",
-    "badge-warn"
+score_grade <- function(s) {
+  if (is.na(s) || !is.numeric(s)) return("알 수 없음")
+  if (s >= 90) return("우수")
+  if (s >= 70) return("양호")
+  if (s >= 50) return("주의")
+  return("부적합")
+}
+
+purpose_label <- function(p) {
+  labels <- c(
+    basic_stats    = "기초 통계 분석",
+    visualization  = "범주형 변수 빈도 분석",
+    advanced_ml    = "통계적 검정 / 가설 검정",
+    correlation    = "상관관계 분석",
+    regression     = "회귀분석",
+    classification = "분류분석",
+    cluster        = "군집분석",
+    time_series    = "시계열 분석",
+    dimension      = "차원 축소 / 변수 구조 탐색",
+    survival       = "생존 분석"
+  )
+  if (!is.null(p) && p %in% names(labels)) labels[[p]] else "미선택"
+}
+
+suit_style <- function(color) {
+  switch(color,
+    success   = "background:#d4edda; border-left:5px solid #28a745; color:#155724;",
+    warning   = "background:#fff3cd; border-left:5px solid #ffc107; color:#856404;",
+    danger    = "background:#f8d7da; border-left:5px solid #dc3545; color:#721c24;",
+    info      = "background:#d1ecf1; border-left:5px solid #17a2b8; color:#0c5460;",
+    "background:#e2e3e5; border-left:5px solid #6c757d; color:#383d41;"
   )
 }
-badge_label <- function(status) {
-  switch(status, ok = "양호", warn = "주의", fail = "위험", "?")
+
+make_donut_svg <- function(s, color) {
+  radius <- 70; cx <- 100; cy <- 100; stroke_w <- 22
+  full_circ <- 2 * pi * radius
+  filled <- full_circ * (s / 100); gap <- full_circ - filled
+  paste0(
+    "<svg viewBox='0 0 200 200' width='180' height='180' xmlns='http://www.w3.org/2000/svg'>",
+    "<circle cx='",cx,"' cy='",cy,"' r='",radius,"' fill='none' stroke='#e9ecef' stroke-width='",stroke_w,"'/>",
+    "<circle cx='",cx,"' cy='",cy,"' r='",radius,"' fill='none' stroke='",color,
+    "' stroke-width='",stroke_w,"' stroke-dasharray='",round(filled,2)," ",round(gap,2),
+    "' stroke-dashoffset='",round(full_circ*0.25,2),"' stroke-linecap='round'",
+    " transform='rotate(-90 ",cx," ",cy,")'/>",
+    "<text x='",cx,"' y='",cy-8,"' text-anchor='middle' dominant-baseline='middle'",
+    " font-size='32' font-weight='bold' fill='",color,
+    "' font-family='Malgun Gothic,Arial,sans-serif'>",s,"</text>",
+    "<text x='",cx,"' y='",cy+22,"' text-anchor='middle' dominant-baseline='middle'",
+    " font-size='13' fill='#999' font-family='Malgun Gothic,Arial,sans-serif'>/ 100</text>",
+    "</svg>"
+  )
 }
+
+# 기본값 계산
+grade   <- score_grade(score)
+s_color <- score_color(score)
+p_label <- purpose_label(purpose)
+
+n_rows          <- nrow(data)
+n_cols          <- ncol(data)
+n_missing_cells <- sum(is.na(data))
+num_cols        <- names(data)[sapply(data, is.numeric)]
 ```
 
-:::: report-header
-::: report-meta
-```         
-<span class="meta-item">📄 `r filename`</span>
-<span class="meta-sep">·</span>
-<span class="meta-item">🎯 사용 목적: `r purpose`</span>
-<span class="meta-sep">·</span>
-<span class="meta-item">🕒 `r format(Sys.time(), '%Y-%m-%d %H:%M')`</span>
-```
-:::
-::::
+<style>
+* { box-sizing: border-box; }
+body { font-family: "Apple SD Gothic Neo","Malgun Gothic",Arial,sans-serif; color:#333; background:#f0f2f5; }
+.report-header {
+  background: #5a67d8; color:white; padding:32px 40px 24px;
+  margin:-15px -15px 30px;
+  -webkit-print-color-adjust:exact; print-color-adjust:exact;
+}
+.report-header h1 { margin:0 0 8px; font-size:24px; color:white; }
+.report-meta { font-size:13px; opacity:0.9; }
+.print-btn-wrap { text-align:right; margin-bottom:16px; }
+.print-btn { padding:8px 18px; background:#667eea; color:white; border:none; border-radius:6px; font-size:14px; cursor:pointer; font-family:inherit; }
+.print-btn:hover { background:#5568d3; }
+.section-title { font-size:17px; font-weight:bold; color:#333; border-bottom:3px solid #667eea; padding-bottom:8px; margin:32px 0 18px; }
+.card-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+.metric-card { background:#f8f9fa; border-radius:8px; padding:16px; text-align:center; border:1px solid #e9ecef; }
+.metric-label { font-size:12px; color:#888; margin-bottom:6px; }
+.metric-value { font-size:24px; font-weight:bold; color:#333; }
+.metric-value.warn { color:#E24B4A; }
+.warn-box { background:#fff3cd; border-left:4px solid #ffc107; padding:14px 18px; margin:10px 0; border-radius:4px; color:#856404; }
+.warn-box-title { font-weight:bold; margin-bottom:6px; }
+.ok-box { background:#d4edda; border-left:4px solid #28a745; padding:14px 18px; margin:10px 0; border-radius:4px; color:#155724; }
+.viz-block { background:#fafafa; border:1px solid #e9ecef; border-radius:8px; padding:20px; margin:14px 0; }
+.viz-title { font-size:14px; font-weight:bold; color:#555; margin-bottom:10px; }
+.finding-danger { background:#f8d7da; border-left:4px solid #dc3545; padding:12px 16px; margin:10px 0; border-radius:4px; color:#721c24; }
+.finding-warn { background:#fff3cd; border-left:4px solid #ffc107; padding:12px 16px; margin:10px 0; border-radius:4px; color:#856404; }
+.finding-info { background:#e2e3e5; border-left:4px solid #6c757d; padding:12px 16px; margin:10px 0; border-radius:4px; color:#383d41; }
+.finding-ok { background:#d4edda; border-left:4px solid #28a745; padding:12px 16px; margin:10px 0; border-radius:4px; color:#155724; }
+.report-footer { text-align:center; padding:20px; border-top:1px solid #eee; color:#999; font-size:12px; margin-top:40px; }
+table { width:100%; border-collapse:collapse; font-size:14px; margin:10px 0; }
+th { background:#f8f9fa; font-weight:bold; padding:10px 12px; text-align:left; border-bottom:2px solid #dee2e6; }
+td { padding:9px 12px; border-bottom:1px solid #dee2e6; }
+tr.row-danger td { background:#FCEBEB; color:#A32D2D; }
+tr.row-warn td   { background:#FAEEDA; color:#854F0B; }
+@media print {
+  .print-btn-wrap { display:none; }
+  body { background:white; }
+  .report-header { background:#5a67d8 !important; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color:white !important; }
+  .report-header h1 { color:white !important; }
+  .report-meta { color:white !important; opacity:1 !important; }
+}
+</style>
 
-------------------------------------------------------------------------
+<!-- 헤더 -->
+<div class="report-header">
+<h1>📊 RDQAS 데이터 품질 진단 보고서</h1>
+<div class="report-meta">
+📄 `r filename` &nbsp;·&nbsp; 🎯 분석 목적: `r p_label` &nbsp;·&nbsp; 🕒 `r format(Sys.time(), "%Y-%m-%d %H:%M")`
+</div>
+</div>
+
+<div class="print-btn-wrap">
+<button class="print-btn" onclick="window.print()">🖨️ PDF로 저장하기</button>
+</div>
+
+---
 
 ## 1. 요약
 
-```{r summary-cards}
-meta <- score_result$meta
-total <- score_result$total
+<div class="card-grid">
+<div class="metric-card"><div class="metric-label">총 행 수</div><div class="metric-value">`r format(n_rows, big.mark=",")`</div></div>
+<div class="metric-card"><div class="metric-label">총 열 수</div><div class="metric-value">`r n_cols`</div></div>
+<div class="metric-card"><div class="metric-label">결측 셀 수</div><div class="metric-value `r ifelse(n_missing_cells>0,'warn','')`">`r format(n_missing_cells, big.mark=",")`</div></div>
+<div class="metric-card"><div class="metric-label">중복 행 수</div><div class="metric-value `r ifelse(n_dup_rows>0,'warn','')`">`r n_dup_rows`</div></div>
+</div>
 
-grade <- if (total >= 80) "우수" else if (total >= 60) "보통" else "미흡"
-grade_color <- score_color(total)
+```{r donut-chart, results='asis'}
+donut_svg <- make_donut_svg(score, s_color)
+cat(paste0(
+  "<div style='display:flex; align-items:center; gap:28px; padding:18px 24px; background:#f8f9fa; border-radius:8px; border-left:5px solid ", s_color, "; margin-bottom:16px;'>",
+  "<div>", donut_svg, "</div>",
+  "<div>",
+  "<div style='font-size:19px; font-weight:bold; margin-bottom:12px; color:", s_color, ";'>품질 종합 점수 — ", grade, "</div>",
+  "<div style='font-size:13px; color:#555; line-height:2.2;'>",
+  "<span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:#1D9E75; margin-right:4px; vertical-align:middle;'></span>90~100점 우수&nbsp;&nbsp;",
+  "<span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:#2196F3; margin-right:4px; vertical-align:middle;'></span>70~89점 양호&nbsp;&nbsp;",
+  "<span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:#f5821d; margin-right:4px; vertical-align:middle;'></span>50~69점 주의&nbsp;&nbsp;",
+  "<span style='display:inline-block; width:10px; height:10px; border-radius:50%; background:#E24B4A; margin-right:4px; vertical-align:middle;'></span>0~49점 부적합",
+  "</div></div></div>"
+))
 ```
 
-::::::: card-grid
-::: metric-card
-```         
-<div class="metric-label">총 행 수</div>
-<div class="metric-value">`r format(meta$n_rows, big.mark=",")`</div>
-```
-:::
+---
 
-::: metric-card
-```         
-<div class="metric-label">총 컬럼 수</div>
-<div class="metric-value">`r meta$n_cols`</div>
-```
-:::
+## 2. 품질 진단 상세
 
-::: metric-card
-```         
-<div class="metric-label">결측 셀 수</div>
-<div class="metric-value warn">`r format(meta$missing_cells, big.mark=",")`</div>
-```
-:::
+**🔹 결측치**
 
-::: metric-card
-```         
-<div class="metric-label">중복 행 수</div>
-<div class="metric-value warn">`r format(meta$dup_rows, big.mark=",")`</div>
-```
-:::
-:::::::
-
-::::: {.score-banner style="border-left: 5px solid `r grade_color`;"}
-::: score-left
-```         
-<div class="score-number" style="color:`r grade_color`;">`r total`</div>
-<div class="score-unit">/ 100</div>
-```
-:::
-
-::: score-right
-```         
-<div class="score-grade" style="color:`r grade_color`;">품질 종합 점수 — `r grade`</div>
-<div class="score-desc">측정 가능한 차원(완전성·유일성·유효성)의 평균값입니다. 일관성·정확성·적시성은 도메인 정보가 필요하여 이번 평가에서 제외되었습니다.</div>
-```
-:::
-:::::
-
-------------------------------------------------------------------------
-
-## 2. 품질 차원별 점수
-
-```{r dimension-chart, fig.height=3.5}
-dims <- score_result$dimensions
-dim_df <- data.frame(
-  name  = dim_labels[names(dims)],
-  score = unlist(dims),
-  measured = !is.na(unlist(dims)),
-  stringsAsFactors = FALSE
-) %>%
-  mutate(
-    score_show = ifelse(is.na(score), 0, score),
-    fill_color = case_when(
-      !measured       ~ "#dddddd",
-      score >= 80     ~ "#1D9E75",
-      score >= 60     ~ "#BA7517",
-      TRUE            ~ "#E24B4A"
-    ),
-    label = ifelse(measured, paste0(score, "점"), "측정불가")
-  )
-
-ggplot(dim_df, aes(x = reorder(name, score_show), y = score_show, fill = fill_color)) +
-  geom_col(width = 0.55, show.legend = FALSE) +
-  geom_text(aes(label = label, y = score_show + 2),
-            hjust = 0, size = 3.5, color = "#444444") +
-  scale_fill_identity() +
-  scale_y_continuous(limits = c(0, 115), breaks = c(0, 25, 50, 75, 100)) +
-  coord_flip() +
-  labs(x = NULL, y = "점수 (0–100)") +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor   = element_blank(),
-    axis.text.y        = element_text(size = 11, color = "#333333"),
-    plot.margin        = margin(8, 24, 8, 8)
-  )
+```{r missing-section, results='asis'}
+if (!is.null(missing_df) && nrow(missing_df) > 0) {
+  cat("<div class='warn-box'><div class='warn-box-title'>❌ 결측치가 발견된 변수</div>")
+  cat("<table><thead><tr><th>변수명</th><th>결측 수</th><th>결측률</th></tr></thead><tbody>")
+  for (i in seq_len(nrow(missing_df))) {
+    r <- missing_df[i, ]
+    cat(paste0("<tr><td><strong>", r$variable, "</strong></td><td>", r$missing_count, "개</td><td>", r$missing_percent, "%</td></tr>"))
+  }
+  cat("</tbody></table></div>")
+} else {
+  cat("<div class='ok-box'>✅ 결측치가 없습니다.</div>")
+}
 ```
 
-```{r dimension-table}
-dim_tbl <- data.frame(
-  차원     = dim_labels[names(dims)],
-  점수     = sapply(unlist(dims), function(s) if (is.na(s)) "측정불가" else paste0(s, "점")),
-  상태     = sapply(unlist(dims), function(s) {
-    if (is.na(s)) "—"
-    else if (s >= 80) "양호"
-    else if (s >= 60) "주의"
-    else "위험"
-  }),
-  stringsAsFactors = FALSE
-)
+**🔹 이상치 (IQR 기준, 수치형 변수)**
 
-kable(dim_tbl, align = c("l","c","c"), row.names = FALSE) %>%
-  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) %>%
-  column_spec(2, bold = TRUE) %>%
-  row_spec(which(dim_tbl$상태 == "위험"), color = "#A32D2D", background = "#FCEBEB") %>%
-  row_spec(which(dim_tbl$상태 == "주의"), color = "#854F0B", background = "#FAEEDA")
+```{r outlier-section, results='asis'}
+if (!is.null(outlier_df) && nrow(outlier_df) > 0) {
+  cat("<div class='warn-box'><div class='warn-box-title'>❌ 이상치가 발견된 변수</div>")
+  cat("<table><thead><tr><th>변수명</th><th>이상치 수</th><th>비율</th></tr></thead><tbody>")
+  for (i in seq_len(nrow(outlier_df))) {
+    r <- outlier_df[i, ]
+    cat(paste0("<tr><td><strong>", r$variable, "</strong></td><td>", r$outlier_count, "개</td><td>", r$outlier_percent, "%</td></tr>"))
+  }
+  cat("</tbody></table></div>")
+} else {
+  cat("<div class='ok-box'>✅ 이상치가 없습니다.</div>")
+}
 ```
 
-------------------------------------------------------------------------
+**🔹 자료형 오류 의심 변수**
+
+```{r type-section, results='asis'}
+if (!is.null(type_df) && nrow(type_df) > 0) {
+  cat("<div class='warn-box'><div class='warn-box-title'>❌ 자료형 오류 의심 변수</div>")
+  cat("<table><thead><tr><th>변수명</th><th>문제 유형</th></tr></thead><tbody>")
+  for (i in seq_len(nrow(type_df))) {
+    r <- type_df[i, ]
+    cat(paste0("<tr><td><strong>", r$variable, "</strong></td><td>", r$issue, "</td></tr>"))
+  }
+  cat("</tbody></table></div>")
+} else {
+  cat("<div class='ok-box'>✅ 자료형 오류가 없습니다.</div>")
+}
+```
+
+---
 
 ## 3. 컬럼별 품질 상세
 
-```{r column-table}
-cd <- score_result$column_detail
-
-cd_display <- cd %>%
-  mutate(
-    missing_pct = paste0(missing_pct, "%"),
-    dup_pct     = paste0(dup_pct, "%"),
-    outliers    = ifelse(is.na(outliers), "—", as.character(outliers)),
-    상태        = badge_label(status)
-  ) %>%
-  select(
-    컬럼명  = column,
-    타입     = type,
-    결측률   = missing_pct,
-    중복률   = dup_pct,
-    이상값   = outliers,
-    상태
-  )
-
-kable(cd_display, align = c("l","c","c","c","c","c"), row.names = FALSE) %>%
-  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE) %>%
-  row_spec(which(cd$status == "fail"), color = "#A32D2D", background = "#FCEBEB") %>%
-  row_spec(which(cd$status == "warn"), color = "#854F0B", background = "#FAEEDA")
+```{r column-detail, results='asis'}
+cat("<table><thead><tr><th>컬럼명</th><th>타입</th><th>결측률</th><th>중복률</th><th>이상값 수</th></tr></thead><tbody>")
+for (col in names(data)) {
+  col_data <- data[[col]]
+  type_label <- if (is.numeric(col_data)) "수치형" else if (inherits(col_data, "Date")) "날짜형" else "문자형"
+  miss_pct <- round(mean(is.na(col_data)) * 100, 1)
+  dup_pct  <- round(mean(duplicated(col_data[!is.na(col_data)])) * 100, 1)
+  outlier_str <- "—"
+  if (is.numeric(col_data)) {
+    Q1 <- quantile(col_data, 0.25, na.rm = TRUE); Q3 <- quantile(col_data, 0.75, na.rm = TRUE)
+    n_out <- sum(col_data < Q1 - 1.5*(Q3-Q1) | col_data > Q3 + 1.5*(Q3-Q1), na.rm = TRUE)
+    if (n_out > 0) outlier_str <- as.character(n_out)
+  }
+  row_class <- if (miss_pct >= 10) "row-danger" else if (miss_pct > 0 || outlier_str != "—") "row-warn" else ""
+  cat(paste0("<tr class='", row_class, "'><td>", col, "</td><td>", type_label, "</td><td>", miss_pct, "%</td><td>", dup_pct, "%</td><td>", outlier_str, "</td></tr>"))
+}
+cat("</tbody></table>")
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 4. 시각화
 
-### 4-1. 결측값 분포
+<div class="viz-block">
+<div class="viz-title">📉 결측값 분포</div>
 
-```{r missing-plot, fig.height=3}
-miss_df <- data.frame(
-  column      = score_result$column_detail$column,
-  missing_pct = score_result$column_detail$missing_pct
-) %>% filter(missing_pct > 0) %>%
-  arrange(desc(missing_pct))
-
-if (nrow(miss_df) == 0) {
-  cat("> ✅ 결측값이 없습니다.")
-} else {
-  ggplot(miss_df, aes(x = reorder(column, missing_pct), y = missing_pct,
-                      fill = ifelse(missing_pct >= 10, "#E24B4A", "#BA7517"))) +
+```{r missing-plot, fig.height=3.5}
+if (!is.null(missing_df) && nrow(missing_df) > 0) {
+  ggplot(missing_df, aes(x = reorder(variable, missing_percent), y = missing_percent,
+         fill = ifelse(missing_percent >= 10, "#E24B4A", "#f5821d"))) +
     geom_col(width = 0.55, show.legend = FALSE) +
-    geom_text(aes(label = paste0(missing_pct, "%")), hjust = -0.1, size = 3.5) +
+    geom_text(aes(label = paste0(missing_percent, "%")), hjust = -0.1, size = 3.5) +
     scale_fill_identity() +
-    scale_y_continuous(limits = c(0, max(miss_df$missing_pct) * 1.25)) +
-    coord_flip() +
-    labs(x = NULL, y = "결측률 (%)") +
+    scale_y_continuous(limits = c(0, max(missing_df$missing_percent) * 1.3)) +
+    coord_flip() + labs(x = NULL, y = "결측률 (%)") +
     theme_minimal(base_size = 11) +
-    theme(panel.grid.major.y = element_blank(),
-          plot.margin = margin(8, 32, 8, 8))
-}
+    theme(panel.grid.major.y = element_blank(), plot.margin = margin(8, 32, 8, 8))
+} else { cat("<p style='color:#999;'>결측값이 없습니다.</p>") }
 ```
 
-### 4-2. 수치형 컬럼 이상값 (박스플롯)
+</div>
 
-```{r outlier-plot, fig.height=4}
-num_cols <- names(df)[sapply(df, is.numeric)]
+<div class="viz-block">
+<div class="viz-title">📦 수치형 변수 이상값 (박스플롯)</div>
 
-if (length(num_cols) == 0) {
-  cat("> 수치형 컬럼이 없습니다.")
-} else {
-  plot_df <- df %>%
-    select(all_of(num_cols)) %>%
-    tidyr::pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
-    filter(!is.na(value))
-
-  ggplot(plot_df, aes(x = variable, y = value)) +
-    geom_boxplot(fill = "#B5D4F4", color = "#185FA5",
-                 outlier.color = "#E24B4A", outlier.alpha = 0.6,
-                 width = 0.5) +
-    labs(x = NULL, y = "값") +
-    theme_minimal(base_size = 11) +
-    theme(axis.text.x = element_text(angle = 30, hjust = 1),
-          panel.grid.major.x = element_blank())
-}
+```{r boxplot, fig.height=4}
+if (length(num_cols) > 0) {
+  data[, num_cols, drop = FALSE] %>%
+    pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+    filter(!is.na(value)) %>%
+    ggplot(aes(x = variable, y = value)) +
+    geom_boxplot(fill = "#B5D4F4", color = "#185FA5", outlier.color = "#E24B4A", outlier.alpha = 0.6, width = 0.5) +
+    labs(x = NULL, y = "값") + theme_minimal(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1), panel.grid.major.x = element_blank())
+} else { cat("<p style='color:#999;'>수치형 변수가 없습니다.</p>") }
 ```
 
-------------------------------------------------------------------------
+</div>
+
+---
 
 ## 5. 적합성 평가
 
-```{r suitability}
-total <- score_result$total
-suit_score <- round(total * 0.85 + ifelse(total >= 80, 10, ifelse(total >= 60, 0, -10)))
-suit_label <- if (suit_score >= 75) "적합" else if (suit_score >= 55) "조건부 적합" else "부적합"
-suit_color <- score_color(suit_score)
+```{r suitability-section, results='asis'}
+cat(paste0(
+  "<div style='", suit_style(suitability$color), " padding:18px 22px; border-radius:4px; margin-bottom:16px;'>",
+  "<div style='font-size:18px; font-weight:bold; margin-bottom:8px;'>상태: ", suitability$status, "</div>",
+  "<div style='margin:8px 0;'>", suitability$message, "</div>"
+))
+if (!is.null(suitability$recommendations) && length(suitability$recommendations) > 0) {
+  cat("<div style='margin-top:12px;'><strong>권장사항:</strong><ul style='padding-left:20px; margin:8px 0;'>")
+  for (rec in suitability$recommendations) cat(paste0("<li style='margin:6px 0;'>", rec, "</li>"))
+  cat("</ul></div>")
+}
+cat("</div>")
 ```
 
-::: {.suit-banner style="border-left:5px solid `r suit_color`; background: #f9f9f9; padding:1rem 1.25rem; border-radius:0 8px 8px 0; margin-bottom:1.5rem;"}
-<strong style="font-size:1.1rem; color:`r suit_color`;">`r suit_label`</strong>
-
-<p style="margin:.5rem 0 0; color:#444; font-size:.9rem;">
-
-사용 목적 <em>"`r purpose`"</em>에 대한 이 데이터의 적합성 평가 결과입니다.<br> 품질 종합 점수 <strong>`r total`점</strong>을 기반으로 산출된 적합성 점수는 <strong>`r suit_score`점</strong>입니다.
-
-</p>
-:::
-
-------------------------------------------------------------------------
+---
 
 ## 6. 주요 발견사항 및 권고사항
 
-```{r findings}
-cd  <- score_result$column_detail
-fail_cols <- cd$column[cd$status == "fail"]
-warn_cols <- cd$column[cd$status == "warn"]
+```{r findings, results='asis'}
+has_finding <- FALSE
+if (!is.null(major_issues) && nrow(major_issues) > 0 &&
+    !(nrow(major_issues) == 1 && major_issues$문제항목[1] == "없음")) {
+  for (i in seq_len(nrow(major_issues))) {
+    r <- major_issues[i, ]
+    cls <- if (r$상태 == "위험") "finding-danger" else "finding-warn"
+    icon <- if (r$상태 == "위험") "⚠️" else "🔔"
+    cat(paste0("<div class='", cls, "'>", icon, " <strong>[", r$상태, "] ", r$문제항목, "</strong><br>", r$설명, "</div>"))
+    has_finding <- TRUE
+  }
+}
+if (!is.null(n_dup_rows) && n_dup_rows > 0) {
+  cat(paste0("<div class='finding-warn'>🔔 <strong>중복 행 ", n_dup_rows, "건:</strong> 분석 목적에 따라 중복 제거 여부를 결정하세요.</div>"))
+  has_finding <- TRUE
+}
+if (!is.null(report$warnings) && length(report$warnings) > 0) {
+  for (w in report$warnings) { cat(paste0("<div class='finding-info'>ℹ️ ", w, "</div>")); has_finding <- TRUE }
+}
+if (!has_finding) cat("<div class='finding-ok'>✅ 주요 품질 문제가 발견되지 않았습니다.</div>")
 ```
 
-```{r findings-list, results='asis'}
-if (length(fail_cols) > 0) {
-  cat(paste0(
-    '<div class="finding fail">',
-    '⚠️ <strong>즉시 조치 필요 (위험)</strong>: ',
-    paste(fail_cols, collapse = ", "),
-    ' 컬럼에서 결측률 10% 이상이 확인되었습니다. 원본 데이터를 재수집하거나 대체값 처리 전략을 수립하세요.',
-    '</div>\n'
-  ))
-}
+---
 
-if (length(warn_cols) > 0) {
-  cat(paste0(
-    '<div class="finding warn">',
-    '🔔 <strong>검토 권고 (주의)</strong>: ',
-    paste(warn_cols, collapse = ", "),
-    ' 컬럼에서 경미한 품질 문제가 확인되었습니다. 분석 전 전처리를 권고합니다.',
-    '</div>\n'
-  ))
-}
+<div class="report-footer">
+본 보고서는 RDQAS 데이터 품질 진단 시스템으로 생성되었습니다.<br>
+최종 분석 결정은 도메인 전문가와 협의하시기 바랍니다.
+</div>
 
-if (score_result$meta$dup_rows > 0) {
-  cat(paste0(
-    '<div class="finding warn">',
-    '🔔 <strong>중복 행 ', score_result$meta$dup_rows, '건</strong>: ',
-    '분석 목적에 따라 중복 제거 여부를 결정하세요.',
-    '</div>\n'
-  ))
-}
-
-if (length(fail_cols) == 0 && length(warn_cols) == 0 && score_result$meta$dup_rows == 0) {
-  cat('<div class="finding ok">✅ 주요 품질 문제가 발견되지 않았습니다.</div>\n')
-}
-```
-
-------------------------------------------------------------------------
-
-::: report-footer
-본 보고서는 자동 생성된 데이터 품질 평가 결과입니다. 도메인 전문가 검토를 병행하시기 바랍니다.
-:::
