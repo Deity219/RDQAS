@@ -222,16 +222,19 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    numeric_vars <- names(data_store$original_data)[
-      sapply(data_store$original_data, is.numeric)
+    type_result <- detect_all_variable_types(data_store$original_data)
+    
+    numeric_vars <- type_result$variable[
+      type_result$variable_type == "수치형 변수"
     ]
     
-    character_vars <- names(data_store$original_data)[
-      sapply(data_store$original_data, is.character)
+    character_vars <- type_result$variable[
+      type_result$variable_type %in% c("범주형 변수", "문자형 변수")
     ]
     
-    date_vars <- names(data_store$original_data)[
-      sapply(data_store$original_data, function(x) inherits(x, "Date"))
+    date_vars <- type_result$variable[
+      type_result$variable_type == "날짜형 변수" |
+        (!is.null(type_result$is_time_candidate) & type_result$is_time_candidate)
     ]
     
     # 빈 경우 안내 메시지용 더미값
@@ -396,7 +399,7 @@ server <- function(input, output, session) {
                               radioButtons(
                                 "ts_time",
                                 "시간변수:",
-                                choices = c(date_vars, numeric_vars),
+                                choices = unique(c(date_vars, names(data_store$original_data))),
                                 selected = NULL
                               )
                        ),
@@ -441,7 +444,7 @@ server <- function(input, output, session) {
                      div(class = "variable-selector-title", "⏱️ 생존 분석 변수 선택"),
                      
                      fluidRow(
-                       column(4,
+                       column(3,
                               p(strong("시간변수")),
                               p("follow-up time (수치형)"),
                               radioButtons(
@@ -452,9 +455,9 @@ server <- function(input, output, session) {
                               )
                        ),
                        
-                       column(4,
+                       column(3,
                               p(strong("사건변수")),
-                              p("사건 여부 (0/1 또는 No/Yes)"),
+                              p("사건 여부 또는 상태값"),
                               radioButtons(
                                 "surv_event",
                                 "사건변수:",
@@ -463,7 +466,17 @@ server <- function(input, output, session) {
                               )
                        ),
                        
-                       column(4,
+                       column(3,
+                              p(strong("사건값")),
+                              p("예: pbc status에서 2를 사건 발생으로 처리"),
+                              textInput(
+                                "event_value",
+                                "사건 발생값:",
+                                value = ""
+                              )
+                       ),
+                       
+                       column(3,
                               p(strong("공변량 (선택)")),
                               p("분석에 포함할 변수"),
                               checkboxGroupInput(
@@ -679,26 +692,47 @@ server <- function(input, output, session) {
       purpose        = input$analysis_purpose,
       data           = data_store$original_data,
       selected_vars  = list(
-        # EDA / 기초통계 / 범주형 / 상관 / 차원축소
-        selected_vars      = input$eda_vars,
-        variables          = input$eda_vars,
+        # 공통
+        purpose = input$analysis_purpose,
+        
+        # EDA / 기초통계 / 범주형
+        selected_vars = input$eda_vars,
+        variables     = input$eda_vars,
+        eda_vars      = input$eda_vars,
+        
         # 가설 검정
-        group_var          = input$mean_group,
-        group_variable     = input$mean_group,
+        test_type      = input$test_type,
+        group_var      = input$mean_group,
+        group_variable = input$mean_group,
+        value_var      = input$mean_value,
+        chi_var1       = input$chi_var1,
+        chi_var2       = input$chi_var2,
+        corr_var1      = input$corr_var1,
+        corr_var2      = input$corr_var2,
+        
+        # 상관분석
+        corr_variables = input$corr_variables,
+        
         # 회귀 / 분류 공통
-        response_var       = input$reg_response   %||% input$class_response,
-        y_var              = input$reg_response   %||% input$class_response,
-        predictor_vars     = input$reg_explanatory %||% input$class_explanatory,
-        x_vars             = input$reg_explanatory %||% input$class_explanatory,
-        # 군집
-        cluster_vars       = input$cluster_variables,
+        response_var   = input$reg_response %||% input$class_response,
+        y_var          = input$reg_response %||% input$class_response,
+        predictor_vars = input$reg_explanatory %||% input$class_explanatory,
+        x_vars         = input$reg_explanatory %||% input$class_explanatory,
+        
+        # 군집 / 차원축소
+        cluster_vars = input$cluster_variables,
+        dim_vars     = input$dim_variables,
+        
         # 시계열
-        time_var           = input$ts_time,
-        analysis_vars      = input$ts_value,
+        time_var      = input$ts_time,
+        value_var     = input$ts_value,
+        analysis_vars = input$ts_value,
+        
         # 생존
-        survival_time_var  = input$surv_time,
-        event_var          = input$surv_event,
-        covariates         = input$surv_covariate
+        survival_time_var = input$surv_time,
+        event_var         = input$surv_event,
+        event_value       = input$event_value,
+        covariates        = input$surv_covariate
       )
     )
     
