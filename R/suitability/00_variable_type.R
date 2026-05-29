@@ -76,7 +76,8 @@ is_date_convertible <- function(x) {
       parsed_success <- parsed_success | !is.na(parsed)
     }
     
-    return(all(parsed_success))
+    parse_rate <- mean(parsed_success)
+    return(parse_rate >= 0.90)
   }
   
   # numeric/integer 형태의 YYYYMMDD 날짜 처리
@@ -201,6 +202,8 @@ detect_all_variable_types <- function(df) {
     }),
     
     variable_type = sapply(df, detect_variable_type),
+    
+    is_time_candidate = sapply(df, is_date_convertible),
     
     row.names = NULL
   )
