@@ -2,10 +2,20 @@
 # 04_check_outliers.R
 # 이상치 품질 검사
 # ============================================================================
-# 배점: 15점
-# - IQR 기준 사용
-# - numeric이고 고유값 수가 11개 이상인 "수치형 변수"만 검사
-# - 숫자형 범주 변수는 이상치 검사 대상에서 제외
+# [파일 역할]
+# - 수치형 변수의 IQR 기준 이상치 비율을 평가한다.
+# - 최종 배점은 15점이다.
+#
+# [수정항목 반영 내역]
+# - 수정항목 5) 예외 처리
+#   * 수치형 변수가 없는 경우 앱이 멈추지 않고 15점으로 처리한다.
+#   * 모든 값이 결측인 변수, Inf/-Inf가 포함된 변수도 IQR 계산에서 오류가 나지 않도록
+#     유한한 값만 사용한다.
+#
+# [기존 기준 유지]
+# - numeric이고 고유값 수가 11개 이상인 "수치형 변수"만 검사한다.
+# - numeric이지만 고유값 수가 2~10개인 수치형 범주 변수는 이상치 검사 대상에서 제외한다.
+# - NaN/Inf/-Inf는 06_check_format_consistency.R에서 별도로 점검한다.
 # ============================================================================
 
 check_outliers_quality <- function(data, variable_types) {
@@ -37,7 +47,7 @@ check_outliers_quality <- function(data, variable_types) {
   outlier_list <- lapply(numeric_idx, function(j) {
     x <- data[[j]]
     
-    if (!is.numeric(x)) {
+    if (!is.numeric(x) && !is.integer(x)) {
       return(data.frame(
         variable = variable_types$variable[j],
         outlier_count = 0,
@@ -50,7 +60,9 @@ check_outliers_quality <- function(data, variable_types) {
       ))
     }
     
-    # Inf, -Inf는 특수값 항목에서 따로 다루므로 IQR 계산에서는 제외한다.
+    # 수정항목 5 반영:
+    # NA/NaN/Inf/-Inf는 IQR 계산에서 제외한다.
+    # 특수값 자체는 06_check_format_consistency.R에서 따로 점검한다.
     x_valid <- x[!is.na(x) & is.finite(x)]
     n_valid <- length(x_valid)
     

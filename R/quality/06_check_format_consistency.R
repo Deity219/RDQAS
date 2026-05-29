@@ -2,12 +2,19 @@
 # 06_check_format_consistency.R
 # 특수값 NaN / Inf / -Inf 포함 여부 검사
 # ============================================================================
-# 배점: 5점
-# - NaN, Inf, -Inf가 포함된 수치형 변수 수 / 전체 수치형 변수 수
+# [파일 역할]
+# - 수치형 변수에 NaN, Inf, -Inf가 포함되어 있는지 검사한다.
+# - 자료형·형식 및 특수값 일관성 20점 중 "특수값 포함 변수 비율" 5점을 담당한다.
+#
+# [수정항목 반영 내역]
+# - 수정항목 5) 예외 처리
+#   * 수치형 변수가 없는 데이터에서도 오류가 나지 않고 5점으로 처리한다.
+#   * NaN/Inf/-Inf는 평균 계산이나 그래프 생성 시 오류를 만들 수 있으므로
+#     결측치나 이상치와 분리해서 별도 점검한다.
 # ============================================================================
 
 check_format_consistency_quality <- function(data) {
-  numeric_idx <- which(vapply(data, is.numeric, logical(1)))
+  numeric_idx <- which(vapply(data, function(x) is.numeric(x) || is.integer(x), logical(1)))
   
   if (length(numeric_idx) == 0) {
     special_table <- data.frame(
