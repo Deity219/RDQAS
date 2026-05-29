@@ -477,11 +477,8 @@ generate_html_report <- function(file, data, report, suitability,
   all_recs <- unique(c(quality_recs, suitability$recommendations))
   
   recs_html <- ""
-  if (!is.null(suitability$recommendations) && length(suitability$recommendations) > 0) {
-    items <- paste0(
-      "<li style='margin:6px 0;'>", esc(suitability$recommendations), "</li>",
-      collapse = "\n"
-    )
+  if (length(all_recs) > 0) {
+    items <- paste0("<li style='margin:6px 0;'>", esc(all_recs), "</li>", collapse = "\n")
     recs_html <- paste0("<ul style='padding-left:20px; margin:10px 0;'>", items, "</ul>")
   }
   
@@ -533,6 +530,8 @@ generate_html_report <- function(file, data, report, suitability,
     /* 섹션 */
     .section { margin-bottom: 40px; }
     .section-title {
+      display: block;  
+      width: 100%;   
       font-size: 17px;
       font-weight: bold;
       color: #333;
@@ -808,13 +807,39 @@ generate_html_report <- function(file, data, report, suitability,
             <span class='legend-dot' style='background:#f5821d;'></span>부분 적합<br>
             <span class='legend-dot' style='background:#E24B4A;'></span>부적합
           </div>
-        </div>")
+     </div>")
                    }
                  },
+                 
                  '
       </div><!-- /donut-pair -->
-    </div>
-
+    </div>',
+                 
+                 if (length(selected_vars) > 0) {
+                   keep_keys <- switch(selected_vars$purpose,
+                     correlation    = c("corr_variables"),
+                     regression     = c("response_var", "predictor_vars"),
+                     classification = c("response_var", "predictor_vars"),
+                     cluster        = c("cluster_vars"),
+                     time_series    = c("time_var", "value_var"),
+                     survival       = c("survival_time_var", "event_var", "covariates"),
+                     dimension      = c("dim_vars"),
+                     advanced_ml    = c("group_var", "value_var", "chi_var1", "chi_var2", "corr_var1", "corr_var2"),
+                     character(0)
+                   )
+                   vars_flat <- unlist(selected_vars[names(selected_vars) %in% keep_keys])
+                   vars_flat <- vars_flat[!is.null(vars_flat) & nchar(vars_flat) > 0]
+                   if (length(vars_flat) > 0) {
+                     var_items <- paste0("<li>", esc(vars_flat), "</li>", collapse = "\n")
+                     paste0("
+    <div class='section'>
+      <div class='section-title'>📌 분석에 사용된 선택 변수</div>
+      <ul style='padding-left:20px; margin:10px 0;'>", var_items, "</ul>
+    </div>")
+                   }
+                 },
+                 
+                 '
     <!-- 2. 데이터 품질 평가 -->
     <div class="section">
       <div class="section-title">2. 데이터 품질 평가</div>

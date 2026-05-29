@@ -1152,6 +1152,7 @@ server <- function(input, output, session) {
     timestamp <- format(Sys.time(), "%Y%m%d_%H%M")
     fname <- paste0(base, "_", p_label, "_", timestamp, ".html")
     fpath <- file.path("reports", fname)
+    dir.create("reports", showWarnings = FALSE) 
     
     tryCatch({
       generate_html_report(
