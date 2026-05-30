@@ -12,6 +12,15 @@ server <- function(input, output, session) {
     selected_variables = NULL
   )
   
+  numeric_vars_current <- reactive({
+    req(data_store$original_data)
+    names(data_store$original_data)[sapply(data_store$original_data, is.numeric)]
+  })
+  character_vars_current <- reactive({
+    req(data_store$original_data)
+    names(data_store$original_data)[sapply(data_store$original_data, is.character)]
+  })
+  
   # ============================================================================
   # 분석 정보 정의
   # ============================================================================
@@ -146,7 +155,7 @@ server <- function(input, output, session) {
       }
       
       data_store$quality_report <- NULL
-      data_store$suitability <- NULL
+      data_store$suitability_result <- NULL
       data_store$selected_variables <- NULL
       
       showNotification(
@@ -290,11 +299,17 @@ server <- function(input, output, session) {
                  div(class = "variable-selector-box",
                      div(class = "variable-selector-title", "📊 상관관계 분석할 변수 선택 (수치형)"),
                      p("분석에 포함할 수치형 변수를 선택하세요. 최소 2개 이상 선택해야 합니다."),
-                     checkboxGroupInput(
+                     selectizeInput(
                        "corr_variables",
-                       "변수 선택:",
+                       "변수 선택 (검색 가능):",
                        choices = numeric_vars,
-                       selected = NULL
+                       selected = NULL,
+                       multiple = TRUE,
+                       options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                     ),
+                     fluidRow(
+                       column(6, actionButton("corr_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                       column(6, actionButton("corr_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                      )
                  )
           )
@@ -311,11 +326,17 @@ server <- function(input, output, session) {
                        column(6,
                               p(strong("설명변수 (독립변수) - 수치형")),
                               p("하나 이상 선택해야 합니다."),
-                              checkboxGroupInput(
+                              selectizeInput(
                                 "reg_explanatory",
-                                "설명변수:",
+                                "변수 선택 (검색 가능):",
                                 choices = numeric_vars,
-                                selected = NULL
+                                selected = NULL,
+                                multiple = TRUE,
+                                options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                              ),
+                              fluidRow(
+                                column(6, actionButton("reg_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                                column(6, actionButton("reg_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                               )
                        ),
                        
@@ -345,11 +366,17 @@ server <- function(input, output, session) {
                        column(6,
                               p(strong("설명변수 (독립변수)")),
                               p("수치형 또는 범주형, 하나 이상 선택"),
-                              checkboxGroupInput(
+                              selectizeInput(
                                 "class_explanatory",
-                                "설명변수:",
+                                "변수 선택 (검색 가능):",
                                 choices = c(numeric_vars, character_vars),
-                                selected = NULL
+                                selected = NULL,
+                                multiple = TRUE,
+                                options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                              ),
+                              fluidRow(
+                                column(6, actionButton("class_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                                column(6, actionButton("class_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                               )
                        ),
                        
@@ -375,11 +402,17 @@ server <- function(input, output, session) {
                  div(class = "variable-selector-box",
                      div(class = "variable-selector-title", "🎲 군집분석할 변수 선택 (수치형)"),
                      p("분석에 포함할 수치형 변수를 선택하세요. 최소 2개 이상 선택해야 합니다."),
-                     checkboxGroupInput(
+                     selectizeInput(
                        "cluster_variables",
-                       "변수 선택:",
+                       "변수 선택 (검색 가능):",
                        choices = numeric_vars,
-                       selected = NULL
+                       selected = NULL,
+                       multiple = TRUE,
+                       options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                     ),
+                     fluidRow(
+                       column(6, actionButton("cluster_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                       column(6, actionButton("cluster_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                      )
                  )
           )
@@ -407,11 +440,17 @@ server <- function(input, output, session) {
                        column(6,
                               p(strong("값 변수 (수치형)")),
                               p("분석할 수치형 변수, 하나 이상 선택"),
-                              checkboxGroupInput(
+                              selectizeInput(
                                 "ts_value",
-                                "값 변수:",
+                                "변수 선택 (검색 가능):",
                                 choices = numeric_vars,
-                                selected = NULL
+                                selected = NULL,
+                                multiple = TRUE,
+                                options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                              ),
+                              fluidRow(
+                                column(6, actionButton("ts_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                                column(6, actionButton("ts_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                               )
                        )
                      )
@@ -426,11 +465,17 @@ server <- function(input, output, session) {
                  div(class = "variable-selector-box",
                      div(class = "variable-selector-title", "🔍 차원 축소 변수 선택 (수치형)"),
                      p("분석에 포함할 수치형 변수를 선택하세요. 최소 2개 이상 선택해야 합니다."),
-                     checkboxGroupInput(
+                     selectizeInput(
                        "dim_variables",
-                       "변수 선택:",
+                       "변수 선택 (검색 가능):",
                        choices = numeric_vars,
-                       selected = NULL
+                       selected = NULL,
+                       multiple = TRUE,
+                       options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                     ),
+                     fluidRow(
+                       column(6, actionButton("dim_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                       column(6, actionButton("dim_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                      )
                  )
           )
@@ -479,11 +524,17 @@ server <- function(input, output, session) {
                        column(3,
                               p(strong("공변량 (선택)")),
                               p("분석에 포함할 변수"),
-                              checkboxGroupInput(
+                              selectizeInput(
                                 "surv_covariate",
-                                "공변량:",
+                                "변수 선택 (검색 가능):",
                                 choices = c(numeric_vars, character_vars),
-                                selected = NULL
+                                selected = NULL,
+                                multiple = TRUE,
+                                options = list(placeholder = "변수명을 입력하거나 선택하세요")
+                              ),
+                              fluidRow(
+                                column(6, actionButton("surv_select_all",   "전체 선택", class = "btn btn-sm btn-default")),
+                                column(6, actionButton("surv_deselect_all", "선택 해제", class = "btn btn-sm btn-default"))
                               )
                        )
                      )
@@ -497,6 +548,30 @@ server <- function(input, output, session) {
     
     return(variable_ui)
   })
+  
+  # 상관분석
+  observeEvent(input$corr_select_all,   { updateSelectizeInput(session, "corr_variables", choices = numeric_vars_current(), selected = numeric_vars_current()) })
+  observeEvent(input$corr_deselect_all, { updateSelectizeInput(session, "corr_variables", selected = character(0)) })
+  
+  # 회귀분석
+  observeEvent(input$reg_select_all,    { updateSelectizeInput(session, "reg_explanatory", choices = numeric_vars_current(), selected = numeric_vars_current()) })
+  observeEvent(input$reg_deselect_all,  { updateSelectizeInput(session, "reg_explanatory", selected = character(0)) })
+  
+  # 분류분석
+  observeEvent(input$class_select_all,  { updateSelectizeInput(session, "class_explanatory", choices = c(numeric_vars_current(), character_vars_current()), selected = c(numeric_vars_current(), character_vars_current())) })
+  observeEvent(input$class_deselect_all,{ updateSelectizeInput(session, "class_explanatory", selected = character(0)) })
+  
+  # 군집분석
+  observeEvent(input$cluster_select_all,   { updateSelectizeInput(session, "cluster_variables", choices = numeric_vars_current(), selected = numeric_vars_current()) })
+  observeEvent(input$cluster_deselect_all, { updateSelectizeInput(session, "cluster_variables", selected = character(0)) })
+  
+  # 시계열
+  observeEvent(input$ts_select_all,    { updateSelectizeInput(session, "ts_value", choices = numeric_vars_current(), selected = numeric_vars_current()) })
+  observeEvent(input$ts_deselect_all,  { updateSelectizeInput(session, "ts_value", selected = character(0)) })
+  
+  # 생존분석
+  observeEvent(input$surv_select_all,   { updateSelectizeInput(session, "surv_covariate", choices = c(numeric_vars_current(), character_vars_current()), selected = c(numeric_vars_current(), character_vars_current())) })
+  observeEvent(input$surv_deselect_all, { updateSelectizeInput(session, "surv_covariate", selected = character(0)) })
   
   # ============================================================================
   # 4. 검정 유형별 설명 출력
@@ -687,7 +762,7 @@ server <- function(input, output, session) {
     
     data_store$quality_report <- assess_data_quality(data_store$original_data)
     
-    data_store$suitability <- evaluate_suitability(
+    data_store$suitability_result <- evaluate_suitability(
       quality_report = data_store$quality_report,
       purpose        = input$analysis_purpose,
       data           = data_store$original_data,
@@ -761,7 +836,7 @@ server <- function(input, output, session) {
     }
     
     report      <- data_store$quality_report
-    suitability <- data_store$suitability
+    suitability <- data_store$suitability_result
     
     # assess_data_quality() 반환 구조에서 필요한 데이터 추출
     score      <- report$total_score
@@ -1022,21 +1097,83 @@ server <- function(input, output, session) {
       } else {
         "데이터"
       }
-      paste0("RDQAS_", base, "_", Sys.Date(), ".html")
+      purpose_labels <- c(
+        regression = "회귀분석", classification = "분류분석",
+        time_series = "시계열분석", survival = "생존분석",
+        correlation = "상관분석", cluster = "군집분석",
+        basic_stats = "기초통계", visualization = "빈도분석",
+        advanced_ml = "가설검정", dimension = "차원축소"
+      )
+      p_label <- purpose_labels[input$analysis_purpose] %||% "분석"
+      paste0(base, "_", p_label, "_", format(Sys.time(), "%Y%m%d_%H%M"), ".html")
     },
     content = function(file) {
       req(data_store$quality_report)
-      req(data_store$suitability)
+      req(data_store$suitability_result)
       req(data_store$original_data)
       
-      generate_html_report(
-        file        = file,
-        data        = data_store$original_data,
-        report      = data_store$quality_report,
-        suitability = data_store$suitability,
-        purpose     = input$analysis_purpose,
-        filename    = input$file_upload$name
-      )
+      tryCatch({
+        generate_html_report(
+          file          = file,
+          data          = data_store$original_data,
+          report        = data_store$quality_report,
+          suitability   = data_store$suitability_result,
+          purpose       = input$analysis_purpose,
+          filename      = input$file_upload$name,
+          selected_vars = data_store$suitability_result$selected_vars
+        )
+      }, error = function(e) {
+        showNotification(
+          paste0("보고서 생성 중 오류 발생: ", e$message),
+          type = "error", duration = 7
+        )
+      })
     }
   )
+  observeEvent(input$save_to_reports, {
+    req(data_store$quality_report)
+    req(data_store$suitability_result)
+    req(data_store$original_data)
+    
+    base <- if (!is.null(input$file_upload$name)) {
+      tools::file_path_sans_ext(input$file_upload$name)
+    } else { "데이터" }
+    
+    purpose_label <- c(
+      regression = "회귀분석", classification = "분류분석",
+      time_series = "시계열분석", survival = "생존분석",
+      correlation = "상관분석", cluster = "군집분석",
+      basic_stats = "기초통계", visualization = "빈도분석",
+      advanced_ml = "가설검정", dimension = "차원축소"
+    )
+    p_label <- purpose_label[input$analysis_purpose] %||% "분석"
+    
+    # 파일명 중복 방지: 시간 붙이기
+    timestamp <- format(Sys.time(), "%Y%m%d_%H%M")
+    fname <- paste0(base, "_", p_label, "_", timestamp, ".html")
+    fpath <- file.path("reports", fname)
+    dir.create("reports", showWarnings = FALSE) 
+    
+    tryCatch({
+      generate_html_report(
+        file          = fpath,
+        data          = data_store$original_data,
+        report        = data_store$quality_report,
+        suitability   = data_store$suitability_result,
+        purpose       = input$analysis_purpose,
+        filename      = input$file_upload$name,
+        selected_vars = data_store$suitability_result$selected_vars
+      )
+      data_store$report_result <- fpath
+      showNotification(
+        paste0("HTML 보고서가 reports/ 폴더에 저장되었습니다: ", fname),
+        type = "message", duration = 5
+      )
+    }, error = function(e) {
+      showNotification(
+        paste0("보고서 저장 중 오류 발생: ", e$message),
+        type = "error", duration = 7
+      )
+    })
+  })
 }

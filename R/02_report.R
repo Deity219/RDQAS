@@ -26,7 +26,8 @@
 # ============================================================================
 
 generate_html_report <- function(file, data, report, suitability,
-                                 purpose = "", filename = "데이터") {
+                                 purpose = "", filename = "데이터",
+                                 selected_vars = list()) {  
   
   # --------------------------------------------------------------------------
   # 내부 헬퍼 함수
@@ -110,18 +111,6 @@ generate_html_report <- function(file, data, report, suitability,
       color           = "secondary",
       message         = "적합성 평가 결과가 없습니다.",
       recommendations = character()
-    )
-  }
-  
-  # suitability$status → 점수 변환 (도넛 차트용)
-  suit_score <- function(status) {
-    switch(as.character(status),
-           "적합"      = 100,
-           "부분 적합" = 60,
-           "부적합"    = 20,
-           "미선택"    = NA,
-           "평가 미완료" = NA,
-           NA
     )
   }
   
@@ -261,6 +250,11 @@ generate_html_report <- function(file, data, report, suitability,
   } else {
     names(data)[sapply(data, is.numeric)]
   }
+  
+  num_cols <- num_cols[nchar(num_cols) > 0]  # 빈 변수명 제거
+  num_cols <- num_cols[!is.na(num_cols)]
+  num_cols <- num_cols[num_cols %in% names(data)] 
+  
   if (length(num_cols) > 0) {
     plot_df <- data[, num_cols, drop = FALSE]
     plot_long <- tidyr::pivot_longer(
@@ -300,38 +294,69 @@ generate_html_report <- function(file, data, report, suitability,
   
   # --------------------------------------------------------------------------
   col_rows_html <- ""
+  
+  # column_summary를 먼저 변수명 기준 lookup용으로 변환
+  cs <- report$column_summary
+  cs_map <- if (!is.null(cs) && nrow(cs) > 0) {
+    split(cs, cs$variable)
+  } else {
+    list()
+  }
+  
   for (col in names(data)) {
-    col_data    <- data[[col]]
-    type_label  <- if (is.numeric(col_data)) "수치형"
-    else if (inherits(col_data, "Date")) "날짜형"
-    else "문자형"
+    col_data <- data[[col]]
     
-    miss_pct <- round(mean(is.na(col_data)) * 100, 1)
-    dup_pct  <- round(mean(duplicated(col_data[!is.na(col_data)])) * 100, 1)
+    # 타입: column_summary의 variable_type 우선, 없으면 직접 판단
+    cs_row     <- cs_map[[col]]
+    type_label <- if (!is.null(cs_row)) {
+      switch(cs_row$variable_type,
+             "수치형 변수" = "수치형",
+             "날짜형 변수" = "날짜형",
+             "범주형 변수" = "범주형",
+             "문자형 변수" = "문자형",
+             "기타"
+      )
+    } else if (is.numeric(col_data))          "수치형"
+    else if (inherits(col_data, "Date"))    "날짜형"
+    else                                    "문자형"
     
-    # 이상치 (수치형만)
-    outlier_str <- "—"
-    if (is.numeric(col_data)) {
-      Q1  <- quantile(col_data, 0.25, na.rm = TRUE)
-      Q3  <- quantile(col_data, 0.75, na.rm = TRUE)
-      IQR <- Q3 - Q1
-      n_out <- sum(col_data < Q1 - 1.5 * IQR | col_data > Q3 + 1.5 * IQR, na.rm = TRUE)
-      if (n_out > 0) outlier_str <- as.character(n_out)
+    # 결측률: column_summary 우선
+    miss_pct <- if (!is.null(cs_row)) {
+      round(cs_row$missing_percent, 1)
+    } else {
+      round(mean(is.na(col_data)) * 100, 1)
     }
     
-    # 행 상태 색상
+    # 고유값 수 / 고유값 비율: column_summary에서 가져옴
+    unique_count <- if (!is.null(cs_row)) cs_row$unique_count else NA_integer_
+    unique_rate  <- if (!is.null(cs_row)) round(cs_row$unique_rate * 100, 1) else NA_real_
+    unique_str   <- if (!is.na(unique_count)) {
+      paste0(unique_count, "개 (", unique_rate, "%)")
+    } else "—"
+    
+    # 이상치: outlier_df에서 가져옴 (중복 계산 방지)
+    outlier_str <- "—"
+    if (!is.null(outlier_df) && nrow(outlier_df) > 0) {
+      out_row <- outlier_df[outlier_df$variable == col, ]
+      if (nrow(out_row) > 0) {
+        outlier_str <- paste0(out_row$outlier_count[1], "개 (",
+                              out_row$outlier_percent[1], "%)")
+      }
+    }
+    
+    # 행 색상
     row_style <- if (miss_pct >= 10) "background:#FCEBEB; color:#A32D2D;"
     else if (miss_pct > 0 || outlier_str != "—") "background:#FAEEDA; color:#854F0B;"
     else ""
     
     col_rows_html <- paste0(col_rows_html, "
-      <tr style='", row_style, "'>
-        <td>", esc(col),        "</td>
-        <td>", type_label,      "</td>
-        <td>", miss_pct, "%",   "</td>
-        <td>", dup_pct,  "%",   "</td>
-        <td>", outlier_str,     "</td>
-      </tr>")
+    <tr style='", row_style, "'>
+      <td>", esc(col),       "</td>
+      <td>", type_label,     "</td>
+      <td>", miss_pct, "%",  "</td>
+      <td>", unique_str,     "</td>
+      <td>", outlier_str,    "</td>
+    </tr>")
   }
   
   # --------------------------------------------------------------------------
@@ -339,10 +364,9 @@ generate_html_report <- function(file, data, report, suitability,
   # --------------------------------------------------------------------------
   findings_html <- ""
   
-  # major_issues 테이블에서 위험/주의 항목 출력
+  # 1. major_issues 루프 (기존 코드 유지)
   if (!is.null(major_issues) && nrow(major_issues) > 0 &&
       !(nrow(major_issues) == 1 && major_issues$문제항목[1] == "없음")) {
-    
     for (i in seq_len(nrow(major_issues))) {
       r <- major_issues[i, ]
       box_style <- if (r$상태 == "위험") {
@@ -360,47 +384,101 @@ generate_html_report <- function(file, data, report, suitability,
     }
   }
   
-  # 중복 행
+  # 2. major_issues에 빠진 이상치를 직접 보완
+  #    (outlier_df에 있는데 findings_html에 아직 반영 안 된 경우)
+  if (!is.null(outlier_df) && nrow(outlier_df) > 0) {
+    already_covered <- grepl("이상치", findings_html, fixed = TRUE)
+    if (!already_covered) {
+      for (i in seq_len(nrow(outlier_df))) {
+        row <- outlier_df[i, ]
+        is_severe  <- !is.null(row$outlier_percent) && row$outlier_percent >= 5
+        box_style  <- if (is_severe) {
+          "background:#f8d7da; border-left:4px solid #dc3545; padding:12px 16px; margin:10px 0; border-radius:4px; color:#721c24;"
+        } else {
+          "background:#fff3cd; border-left:4px solid #ffc107; padding:12px 16px; margin:10px 0; border-radius:4px; color:#856404;"
+        }
+        icon       <- if (is_severe) "⚠️" else "🔔"
+        severity   <- if (is_severe) "위험" else "주의"
+        findings_html <- paste0(findings_html,
+                                "<div style='", box_style, "'>",
+                                icon, " <strong>[", severity, "] 이상치: ", esc(row$variable), "</strong><br>",
+                                esc(row$variable), " 변수에서 ", row$outlier_percent, "% (", row$outlier_count,
+                                "개)의 이상치가 감지되었습니다.",
+                                if (!is_severe) " 실제 관측값인지 확인하세요." else "",
+                                "</div>"
+        )
+      }
+    }
+  }
+  
+  # 3. 중복 행 (기존 코드 유지)
   if (!is.null(n_dup_rows) && n_dup_rows > 0) {
     findings_html <- paste0(findings_html,
                             "<div style='background:#fff3cd; border-left:4px solid #ffc107;
-                   padding:12px 16px; margin:10px 0; border-radius:4px; color:#856404;'>
-        🔔 <strong>중복 행 ", n_dup_rows, "건:</strong>
-        분석 목적에 따라 중복 제거 여부를 결정하세요.
-      </div>"
+     padding:12px 16px; margin:10px 0; border-radius:4px; color:#856404;'>
+     🔔 <strong>중복 행 ", n_dup_rows, "건:</strong>
+     분석 목적에 따라 중복 제거 여부를 결정하세요.
+    </div>"
     )
   }
   
-  # 경고 문구 (warnings)
+  # 4. 경고 문구 warnings (기존 코드 유지)
   if (!is.null(report$warnings) && length(report$warnings) > 0) {
     for (w in report$warnings) {
       findings_html <- paste0(findings_html,
                               "<div style='background:#e2e3e5; border-left:4px solid #6c757d;
-                     padding:12px 16px; margin:10px 0; border-radius:4px; color:#383d41;'>
-          ℹ️ ", esc(w), "
-        </div>"
+       padding:12px 16px; margin:10px 0; border-radius:4px; color:#383d41;'>
+       ℹ️ ", esc(w), "
+      </div>"
       )
     }
   }
   
-  # 아무 문제 없을 때
+  # 5. 여기까지 모두 통과한 뒤 최종 판단 — 딱 한 번만
+  has_any_issue <- (
+    (!is.null(missing_df) && nrow(missing_df) > 0) ||
+      (!is.null(outlier_df) && nrow(outlier_df) > 0) ||
+      (!is.null(type_df)    && nrow(type_df)    > 0) ||
+      (!is.null(n_dup_rows) && n_dup_rows > 0)
+  )
+  
   if (findings_html == "") {
-    findings_html <- "
+    if (has_any_issue) {
+      # major_issues가 누락됐지만 실제 문제는 있는 예외 상황
+      findings_html <- "
+      <div style='background:#fff3cd; border-left:4px solid #ffc107;
+                  padding:12px 16px; margin:10px 0; border-radius:4px; color:#856404;'>
+        🔔 품질 문제가 감지되었으나 세부 내용을 불러오지 못했습니다.
+           원본 진단 결과를 확인하세요.
+      </div>"
+    } else {
+      findings_html <- "
       <div style='background:#d4edda; border-left:4px solid #28a745;
                   padding:12px 16px; margin:10px 0; border-radius:4px; color:#155724;'>
         ✅ 주요 품질 문제가 발견되지 않았습니다.
       </div>"
+    }
   }
   
   # --------------------------------------------------------------------------
   # 권장사항 목록
   # --------------------------------------------------------------------------
+  # 품질 기반 자동 권고사항 생성
+  quality_recs <- character()
+  if (!is.null(missing_df) && nrow(missing_df) > 0)
+    quality_recs <- c(quality_recs, "결측치가 존재합니다. 결측 처리 방법(제거/대체)을 검토하세요.")
+  if (!is.null(outlier_df) && nrow(outlier_df) > 0)
+    quality_recs <- c(quality_recs, "이상치가 감지되었습니다. 실제 관측값인지 확인하세요.")
+  if (!is.null(type_df) && nrow(type_df) > 0)
+    quality_recs <- c(quality_recs, "자료형 오류가 의심됩니다. 변수 형식 변환을 검토하세요.")
+  if (!is.null(n_dup_rows) && n_dup_rows > 0)
+    quality_recs <- c(quality_recs, "중복 행이 존재합니다. 분석 전 중복 제거 여부를 결정하세요.")
+  
+  all_recs <- unique(c(quality_recs, suitability$recommendations))
+  
   recs_html <- ""
-  if (!is.null(suitability$recommendations) && length(suitability$recommendations) > 0) {
-    items <- paste0(
-      "<li style='margin:6px 0;'>", esc(suitability$recommendations), "</li>",
-      collapse = "\n"
-    )
+  if (length(all_recs) > 0) {
+    items <- paste0("<li style='margin:6px 0;'>", esc(all_recs), "</li>", collapse = "\n")
     recs_html <- paste0("<ul style='padding-left:20px; margin:10px 0;'>", items, "</ul>")
   }
   
@@ -452,6 +530,8 @@ generate_html_report <- function(file, data, report, suitability,
     /* 섹션 */
     .section { margin-bottom: 40px; }
     .section-title {
+      display: block;  
+      width: 100%;   
       font-size: 17px;
       font-weight: bold;
       color: #333;
@@ -693,7 +773,12 @@ generate_html_report <- function(file, data, report, suitability,
 
         <!-- 분석 적합성 점수 -->',
                  {
-                   s_val   <- suit_score(suitability$status)
+                   s_val <- if (!is.null(suitability$score) && !is.na(suitability$score)) {
+                     as.numeric(suitability$score)
+                   } else {
+                     switch(as.character(suitability$status),
+                            "적합" = 100, "부분 적합" = 60, "부적합" = 20, NA)
+                   }
                    s_col   <- suit_donut_color(suitability$color)
                    s_label <- suitability$status
                    
@@ -722,13 +807,39 @@ generate_html_report <- function(file, data, report, suitability,
             <span class='legend-dot' style='background:#f5821d;'></span>부분 적합<br>
             <span class='legend-dot' style='background:#E24B4A;'></span>부적합
           </div>
-        </div>")
+     </div>")
                    }
                  },
+                 
                  '
       </div><!-- /donut-pair -->
-    </div>
-
+    </div>',
+                 
+                 if (length(selected_vars) > 0) {
+                   keep_keys <- switch(selected_vars$purpose,
+                     correlation    = c("corr_variables"),
+                     regression     = c("response_var", "predictor_vars"),
+                     classification = c("response_var", "predictor_vars"),
+                     cluster        = c("cluster_vars"),
+                     time_series    = c("time_var", "value_var"),
+                     survival       = c("survival_time_var", "event_var", "covariates"),
+                     dimension      = c("dim_vars"),
+                     advanced_ml    = c("group_var", "value_var", "chi_var1", "chi_var2", "corr_var1", "corr_var2"),
+                     character(0)
+                   )
+                   vars_flat <- unlist(selected_vars[names(selected_vars) %in% keep_keys])
+                   vars_flat <- vars_flat[!is.null(vars_flat) & nchar(vars_flat) > 0]
+                   if (length(vars_flat) > 0) {
+                     var_items <- paste0("<li>", esc(vars_flat), "</li>", collapse = "\n")
+                     paste0("
+    <div class='section'>
+      <div class='section-title'>📌 분석에 사용된 선택 변수</div>
+      <ul style='padding-left:20px; margin:10px 0;'>", var_items, "</ul>
+    </div>")
+                   }
+                 },
+                 
+                 '
     <!-- 2. 데이터 품질 평가 -->
     <div class="section">
       <div class="section-title">2. 데이터 품질 평가</div>
@@ -829,7 +940,7 @@ generate_html_report <- function(file, data, report, suitability,
             <th>컬럼명</th>
             <th>타입</th>
             <th>결측률</th>
-            <th>중복률</th>
+            <th>고유값 수</th>
             <th>이상값 수</th>
           </tr>
         </thead>
