@@ -114,8 +114,31 @@ is_date_convertible <- function(x) {
 }
 
 
-# ── 4. 단일 변수 유형 자동 판정 ─────────────────────────────────
-detect_variable_type <- function(x) {
+# ── 4. ID성 변수로 의심되는 변수명인지 판정 ─────────────────────
+# 변수명에 id, no, code 등의 토큰이 포함된 경우에만 ID성 변수로 본다.
+# (CRIM, KS11.Open 같은 측정 변수가 고유값 비율만으로 ID성으로
+#  오판되는 문제를 막기 위해, ID성 판정은 변수명 기반으로 제한한다.)
+is_id_like_name <- function(var_name) {
+  if (is.null(var_name) || length(var_name) == 0) {
+    return(FALSE)
+  }
+  
+  var_name <- as.character(var_name)[1]
+  
+  if (is.na(var_name) || !nzchar(trimws(var_name))) {
+    return(FALSE)
+  }
+  
+  nm <- tolower(trimws(var_name))
+  
+  # id / no / code / key / seq 를 토큰 경계 기준으로 매칭
+  grepl("(^|[^a-z])(id|no|code|key|seq)([^a-z]|$)", nm)
+}
+
+
+# ── 5. 단일 변수 유형 자동 판정 ─────────────────────────────────
+# var_name: 변수명(있으면 ID성 변수 판정에 사용)
+detect_variable_type <- function(x, var_name = NULL) {
   
   x_for_count <- normalize_missing(x)
   x_nonmiss <- x_for_count[!is.na(x_for_count)]
@@ -133,35 +156,46 @@ detect_variable_type <- function(x) {
   
   # 2. 날짜형 변수
   # Date/POSIXct이거나 날짜로 변환 가능한 변수
-  # 날짜형은 ID성 변수보다 먼저 판정해야 함
+  # 날짜형은 수치형/ID성 변수보다 먼저 판정해야 함
   if (is_date_convertible(x)) {
     return("날짜형 변수")
   }
   
-  # 3. ID성 변수
-  # 결측 제외 관측치 수가 30개 이상이고,
-  # 고유값 수 / 결측 제외 관측치 수 >= 0.9
-  if (n_nonmiss >= 30 && unique_ratio >= 0.9) {
+  # 3. 수치형 변수 판정 (ID성 변수 판정보다 먼저)
+  # numeric 변수는 고유값 비율만으로 ID성으로 오판되지 않도록 먼저 처리한다.
+  if (is.numeric(x)) {
+    
+    # 3-1. 변수명이 명확히 ID성(id/no/code 등)이고 거의 모든 값이 고유하면
+    #      숫자형 ID 컬럼(예: 일련번호)으로 보아 ID성 변수로 판정
+    if (is_id_like_name(var_name) && n_nonmiss >= 30 && unique_ratio >= 0.9) {
+      return("ID성 변수")
+    }
+    
+    # 3-2. 고유값 수가 2개 이상 10개 이하 → 숫자형 범주 변수
+    if (n_unique >= 2 && n_unique <= 10) {
+      return("숫자형 범주 변수")
+    }
+    
+    # 3-3. 고유값 수가 11개 이상 → 수치형 변수
+    if (n_unique >= 11) {
+      return("수치형 변수")
+    }
+    
+    return("기타 변수")
+  }
+  
+  # 4. ID성 변수 (numeric이 아닌 변수)
+  # 변수명이 id/no/code 등을 포함하고,
+  # 결측 제외 관측치 수가 30개 이상이며 고유값 비율이 0.9 이상인 경우에만 판정
+  if (is_id_like_name(var_name) && n_nonmiss >= 30 && unique_ratio >= 0.9) {
     return("ID성 변수")
   }
   
-  # 4. 범주형 변수
+  # 5. 범주형 변수
   # 문자형, factor형, logical형 변수 중 고유값 수가 2개 이상 10개 이하
   if ((is.character(x) || is.factor(x) || is.logical(x)) &&
       n_unique >= 2 && n_unique <= 10) {
     return("범주형 변수")
-  }
-  
-  # 5. 숫자형 범주 변수
-  # numeric이지만 고유값 수가 2개 이상 10개 이하
-  if (is.numeric(x) && n_unique >= 2 && n_unique <= 10) {
-    return("숫자형 범주 변수")
-  }
-  
-  # 6. 수치형 변수
-  # numeric이고 고유값 수가 11개 이상
-  if (is.numeric(x) && n_unique >= 11) {
-    return("수치형 변수")
   }
   
   # 기준표에 명확히 들어가지 않는 변수
@@ -201,7 +235,12 @@ detect_all_variable_types <- function(df) {
       }
     }),
     
-    variable_type = sapply(df, detect_variable_type),
+    # 변수명을 함께 전달하여 ID성 변수 판정에 활용
+    variable_type = mapply(
+      function(col, nm) detect_variable_type(col, var_name = nm),
+      df, names(df),
+      SIMPLIFY = TRUE, USE.NAMES = FALSE
+    ),
     
     is_time_candidate = sapply(df, is_date_convertible),
     

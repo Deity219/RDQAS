@@ -29,6 +29,11 @@ generate_html_report <- function(file, data, report, suitability,
                                  purpose = "", filename = "데이터",
                                  selected_vars = list()) {  
   
+  # NULL 대체 연산자 (다른 파일에서 정의되지 않은 경우 대비)
+  if (!exists("%||%")) {
+    `%||%` <- function(x, y) if (is.null(x)) y else x
+  }
+  
   # --------------------------------------------------------------------------
   # 내부 헬퍼 함수
   # --------------------------------------------------------------------------
@@ -58,7 +63,7 @@ generate_html_report <- function(file, data, report, suitability,
     if (s >= 90) return("우수")
     if (s >= 70) return("양호")
     if (s >= 50) return("주의")
-    return("부적합합")
+    return("부적합")
   }
   
   # SVG 도넛 차트 생성 (외부 라이브러리 없이 순수 SVG)
@@ -310,10 +315,12 @@ generate_html_report <- function(file, data, report, suitability,
     cs_row     <- cs_map[[col]]
     type_label <- if (!is.null(cs_row)) {
       switch(cs_row$variable_type,
-             "수치형 변수" = "수치형",
-             "날짜형 변수" = "날짜형",
-             "범주형 변수" = "범주형",
-             "문자형 변수" = "문자형",
+             "수치형 변수"      = "수치형",
+             "날짜형 변수"      = "날짜형",
+             "범주형 변수"      = "범주형",
+             "숫자형 범주 변수" = "범주형(숫자코딩)",
+             "문자형 변수"      = "문자형",
+             "ID성 변수"        = "ID성",
              "기타"
       )
     } else if (is.numeric(col_data))          "수치형"
@@ -384,7 +391,35 @@ generate_html_report <- function(file, data, report, suitability,
     }
   }
   
-  # 2. major_issues에 빠진 이상치를 직접 보완
+  # 2. major_issues에 빠진 결측치를 직접 보완
+  #    (missing_df에 있는데 findings_html에 아직 반영 안 된 경우)
+  if (!is.null(missing_df) && nrow(missing_df) > 0) {
+    for (i in seq_len(nrow(missing_df))) {
+      row <- missing_df[i, ]
+      
+      is_severe <- !is.null(row$missing_percent) && row$missing_percent >= 10
+      
+      box_style <- if (is_severe) {
+        "background:#f8d7da; border-left:4px solid #dc3545; padding:12px 16px; margin:10px 0; border-radius:4px; color:#721c24;"
+      } else {
+        "background:#fff3cd; border-left:4px solid #ffc107; padding:12px 16px; margin:10px 0; border-radius:4px; color:#856404;"
+      }
+      
+      icon     <- if (is_severe) "⚠️" else "🔔"
+      severity <- if (is_severe) "위험" else "주의"
+      
+      findings_html <- paste0(
+        findings_html,
+        "<div style='", box_style, "'>",
+        icon, " <strong>[", severity, "] 결측치: ", esc(row$variable), "</strong><br>",
+        esc(row$variable), " 변수에 ", row$missing_percent, "% (", row$missing_count,
+        "개)의 결측치가 존재합니다. 결측 처리 방법(제거/대체)을 검토하세요.",
+        "</div>"
+      )
+    }
+  }
+  
+  # 3. major_issues에 빠진 이상치를 직접 보완
   #    (outlier_df에 있는데 findings_html에 아직 반영 안 된 경우)
   if (!is.null(outlier_df) && nrow(outlier_df) > 0) {
     already_covered <- grepl("이상치", findings_html, fixed = TRUE)
@@ -411,7 +446,7 @@ generate_html_report <- function(file, data, report, suitability,
     }
   }
   
-  # 3. 중복 행 (기존 코드 유지)
+  # 4. 중복 행 (기존 코드 유지)
   if (!is.null(n_dup_rows) && n_dup_rows > 0) {
     findings_html <- paste0(findings_html,
                             "<div style='background:#fff3cd; border-left:4px solid #ffc107;
@@ -422,7 +457,7 @@ generate_html_report <- function(file, data, report, suitability,
     )
   }
   
-  # 4. 경고 문구 warnings (기존 코드 유지)
+  # 5. 경고 문구 warnings (기존 코드 유지)
   if (!is.null(report$warnings) && length(report$warnings) > 0) {
     for (w in report$warnings) {
       findings_html <- paste0(findings_html,
@@ -434,7 +469,7 @@ generate_html_report <- function(file, data, report, suitability,
     }
   }
   
-  # 5. 여기까지 모두 통과한 뒤 최종 판단 — 딱 한 번만
+  # 6. 여기까지 모두 통과한 뒤 최종 판단 — 딱 한 번만
   has_any_issue <- (
     (!is.null(missing_df) && nrow(missing_df) > 0) ||
       (!is.null(outlier_df) && nrow(outlier_df) > 0) ||
@@ -816,25 +851,66 @@ generate_html_report <- function(file, data, report, suitability,
     </div>',
                  
                  if (length(selected_vars) > 0) {
-                   keep_keys <- switch(selected_vars$purpose,
-                     correlation    = c("corr_variables"),
-                     regression     = c("response_var", "predictor_vars"),
-                     classification = c("response_var", "predictor_vars"),
-                     cluster        = c("cluster_vars"),
-                     time_series    = c("time_var", "value_var"),
-                     survival       = c("survival_time_var", "event_var", "covariates"),
-                     dimension      = c("dim_vars"),
-                     advanced_ml    = c("group_var", "value_var", "chi_var1", "chi_var2", "corr_var1", "corr_var2"),
-                     character(0)
+                   # 선택 변수를 분석 목적별 역할에 따라 출력
+                   # (단순 unlist 대신 반응변수/설명변수, 시간/값 변수 등 역할 구분)
+                   
+                   # selected_vars에서 특정 key를 정리된 문자열 벡터로 추출
+                   pick_vars <- function(key) {
+                     v <- selected_vars[[key]]
+                     if (is.null(v)) return(character())
+                     v <- as.character(unlist(v, use.names = FALSE))
+                     v <- v[!is.na(v)]
+                     v <- trimws(v)
+                     v[nchar(v) > 0]
+                   }
+                   
+                   # 역할명 + 변수 목록을 한 줄로 렌더링
+                   render_role <- function(role_label, vars) {
+                     if (length(vars) == 0) return("")
+                     paste0(
+                       "<li><strong>", esc(role_label), ":</strong> ",
+                       esc(paste(vars, collapse = ", ")), "</li>"
+                     )
+                   }
+                   
+                   purpose_now <- selected_vars$purpose %||% ""
+                   
+                   role_items <- switch(
+                     purpose_now,
+                     regression = paste0(
+                       render_role("반응변수", pick_vars("response_var")),
+                       render_role("설명변수", pick_vars("predictor_vars"))
+                     ),
+                     classification = paste0(
+                       render_role("분류변수", pick_vars("response_var")),
+                       render_role("설명변수", pick_vars("predictor_vars"))
+                     ),
+                     time_series = paste0(
+                       render_role("시간변수", pick_vars("time_var")),
+                       render_role("값 변수", pick_vars("value_var"))
+                     ),
+                     survival = paste0(
+                       render_role("생존시간 변수", pick_vars("survival_time_var")),
+                       render_role("사건 변수", pick_vars("event_var")),
+                       render_role("공변량", pick_vars("covariates"))
+                     ),
+                     dimension = render_role("차원축소 변수", pick_vars("dim_vars")),
+                     correlation = render_role("상관분석 변수", pick_vars("corr_variables")),
+                     cluster = render_role("군집분석 변수", pick_vars("cluster_vars")),
+                     advanced_ml = paste0(
+                       render_role("그룹 변수", pick_vars("group_var")),
+                       render_role("값 변수", pick_vars("value_var")),
+                       render_role("변수 1", c(pick_vars("chi_var1"), pick_vars("corr_var1"))),
+                       render_role("변수 2", c(pick_vars("chi_var2"), pick_vars("corr_var2")))
+                     ),
+                     ""
                    )
-                   vars_flat <- unlist(selected_vars[names(selected_vars) %in% keep_keys])
-                   vars_flat <- vars_flat[!is.null(vars_flat) & nchar(vars_flat) > 0]
-                   if (length(vars_flat) > 0) {
-                     var_items <- paste0("<li>", esc(vars_flat), "</li>", collapse = "\n")
+                   
+                   if (nzchar(role_items)) {
                      paste0("
     <div class='section'>
       <div class='section-title'>📌 분석에 사용된 선택 변수</div>
-      <ul style='padding-left:20px; margin:10px 0;'>", var_items, "</ul>
+      <ul style='padding-left:20px; margin:10px 0;'>", role_items, "</ul>
     </div>")
                    }
                  },
