@@ -585,10 +585,18 @@ evaluate_suitability <- function(quality_report,
     
     if (purpose %in% c("correlation", "dimension")) {
       
-      vars <- get_selected_vars(
-        selected_vars,
-        c("corr_variables", "selected_vars", "variables", "analysis_vars")
-      )
+      # 차원축소는 dim_vars를, 상관분석은 corr_variables를 우선 읽는다.
+      vars <- if (purpose == "dimension") {
+        get_selected_vars(
+          selected_vars,
+          c("dim_vars", "selected_vars", "variables", "analysis_vars")
+        )
+      } else {
+        get_selected_vars(
+          selected_vars,
+          c("corr_variables", "selected_vars", "variables", "analysis_vars")
+        )
+      }
       
       purpose_label <- ifelse(
         purpose == "correlation",
@@ -676,6 +684,37 @@ evaluate_suitability <- function(quality_report,
         type_result = type_result,
         selected_vars = vars_for_eda
       )
+      
+      # check_eda()는 EDA 전용 문구("EDA 적합성 점수는 ...")를 notes/messages에
+      # 담아 반환한다. 상관분석/차원축소 결과에 EDA 공통 문구가 섞이지 않도록
+      # 목적별 문구로 정리한다.
+      purpose_specific_note <- if (purpose == "correlation") {
+        paste0(
+          "상관분석 적합성 점수는 선택한 수치형 변수들이 상관계수 계산과 ",
+          "관계 탐색에 사용할 수 있는 구조를 갖추었는지 평가한 점수입니다."
+        )
+      } else {
+        paste0(
+          "차원축소 적합성 점수는 선택한 수치형 변수들이 주성분분석 등 ",
+          "다변량 구조 분석에 사용할 수 있는 구조를 갖추었는지 평가한 점수입니다."
+        )
+      }
+      
+      sanitize_eda_text <- function(txt) {
+        if (is.null(txt) || length(txt) == 0) {
+          return(character())
+        }
+        # EDA 전용 점수 설명 문구는 제거
+        txt <- txt[!grepl("EDA 적합성 점수", txt)]
+        # 남은 문구의 'EDA' 표현은 목적 라벨로 치환
+        txt <- gsub("데이터 탐색\\(EDA\\)", purpose_label, txt)
+        txt <- gsub("EDA", purpose_label, txt)
+        txt
+      }
+      
+      res$notes <- unique(c(purpose_specific_note, sanitize_eda_text(res$notes)))
+      res$messages <- sanitize_eda_text(res$messages)
+      res$analysis <- purpose_label
       
       return(convert_result_to_report(
         res = res,

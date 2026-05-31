@@ -12,13 +12,23 @@ server <- function(input, output, session) {
     selected_variables = NULL
   )
   
-  numeric_vars_current <- reactive({
+  # 변수 후보는 is.numeric()이 아니라 detect_all_variable_types() 결과 기준으로 생성
+  var_types_current <- reactive({
     req(data_store$original_data)
-    names(data_store$original_data)[sapply(data_store$original_data, is.numeric)]
+    detect_all_variable_types(data_store$original_data)
   })
-  character_vars_current <- reactive({
-    req(data_store$original_data)
-    names(data_store$original_data)[sapply(data_store$original_data, is.character)]
+  
+  # 수치형 변수 (회귀/상관/군집/차원축소/시계열 값 변수 후보)
+  numeric_vars_current <- reactive({
+    tr <- var_types_current()
+    tr$variable[tr$variable_type == "수치형 변수"]
+  })
+  
+  # 범주형 후보: 범주형 변수 + 숫자형 범주 변수
+  # (분류분석 분류변수/사건변수/범주형 변수 후보에 사용)
+  categorical_vars_current <- reactive({
+    tr <- var_types_current()
+    tr$variable[tr$variable_type %in% c("범주형 변수", "숫자형 범주 변수")]
   })
   
   # ============================================================================
@@ -233,12 +243,15 @@ server <- function(input, output, session) {
     
     type_result <- detect_all_variable_types(data_store$original_data)
     
+    # 수치형 변수 (회귀/상관/군집/차원축소/시계열 값 변수 후보)
     numeric_vars <- type_result$variable[
       type_result$variable_type == "수치형 변수"
     ]
     
-    character_vars <- type_result$variable[
-      type_result$variable_type %in% c("범주형 변수", "문자형 변수")
+    # 범주형 후보: 범주형 변수 + 숫자형 범주 변수
+    # (분류분석 분류변수/사건변수/범주형 변수 후보에 포함)
+    categorical_vars <- type_result$variable[
+      type_result$variable_type %in% c("범주형 변수", "숫자형 범주 변수")
     ]
     
     date_vars <- type_result$variable[
@@ -247,9 +260,9 @@ server <- function(input, output, session) {
     ]
     
     # 빈 경우 안내 메시지용 더미값
-    if (length(numeric_vars) == 0)   numeric_vars   <- c("수치형 변수 없음" = "")
-    if (length(character_vars) == 0) character_vars <- c("범주형 변수 없음" = "")
-    if (length(date_vars) == 0)      date_vars      <- c("날짜형 변수 없음" = "")
+    if (length(numeric_vars) == 0)     numeric_vars     <- c("수치형 변수 없음" = "")
+    if (length(categorical_vars) == 0) categorical_vars <- c("범주형 변수 없음" = "")
+    if (length(date_vars) == 0)        date_vars        <- c("날짜형 변수 없음" = "")
     
     variable_ui <- switch(
       input$analysis_purpose,
@@ -369,7 +382,7 @@ server <- function(input, output, session) {
                               selectizeInput(
                                 "class_explanatory",
                                 "변수 선택 (검색 가능):",
-                                choices = c(numeric_vars, character_vars),
+                                choices = c(numeric_vars, categorical_vars),
                                 selected = NULL,
                                 multiple = TRUE,
                                 options = list(placeholder = "변수명을 입력하거나 선택하세요")
@@ -386,7 +399,7 @@ server <- function(input, output, session) {
                               radioButtons(
                                 "class_response",
                                 "분류변수:",
-                                choices = character_vars,
+                                choices = categorical_vars,
                                 selected = NULL
                               )
                        )
@@ -506,7 +519,7 @@ server <- function(input, output, session) {
                               radioButtons(
                                 "surv_event",
                                 "사건변수:",
-                                choices = c(numeric_vars, character_vars),
+                                choices = categorical_vars,
                                 selected = NULL
                               )
                        ),
@@ -527,7 +540,7 @@ server <- function(input, output, session) {
                               selectizeInput(
                                 "surv_covariate",
                                 "변수 선택 (검색 가능):",
-                                choices = c(numeric_vars, character_vars),
+                                choices = c(numeric_vars, categorical_vars),
                                 selected = NULL,
                                 multiple = TRUE,
                                 options = list(placeholder = "변수명을 입력하거나 선택하세요")
@@ -557,20 +570,24 @@ server <- function(input, output, session) {
   observeEvent(input$reg_select_all,    { updateSelectizeInput(session, "reg_explanatory", choices = numeric_vars_current(), selected = numeric_vars_current()) })
   observeEvent(input$reg_deselect_all,  { updateSelectizeInput(session, "reg_explanatory", selected = character(0)) })
   
-  # 분류분석
-  observeEvent(input$class_select_all,  { updateSelectizeInput(session, "class_explanatory", choices = c(numeric_vars_current(), character_vars_current()), selected = c(numeric_vars_current(), character_vars_current())) })
+  # 분류분석 (수치형 + 범주형/숫자형 범주)
+  observeEvent(input$class_select_all,  { updateSelectizeInput(session, "class_explanatory", choices = c(numeric_vars_current(), categorical_vars_current()), selected = c(numeric_vars_current(), categorical_vars_current())) })
   observeEvent(input$class_deselect_all,{ updateSelectizeInput(session, "class_explanatory", selected = character(0)) })
   
   # 군집분석
   observeEvent(input$cluster_select_all,   { updateSelectizeInput(session, "cluster_variables", choices = numeric_vars_current(), selected = numeric_vars_current()) })
   observeEvent(input$cluster_deselect_all, { updateSelectizeInput(session, "cluster_variables", selected = character(0)) })
   
+  # 차원축소
+  observeEvent(input$dim_select_all,   { updateSelectizeInput(session, "dim_variables", choices = numeric_vars_current(), selected = numeric_vars_current()) })
+  observeEvent(input$dim_deselect_all, { updateSelectizeInput(session, "dim_variables", selected = character(0)) })
+  
   # 시계열
   observeEvent(input$ts_select_all,    { updateSelectizeInput(session, "ts_value", choices = numeric_vars_current(), selected = numeric_vars_current()) })
   observeEvent(input$ts_deselect_all,  { updateSelectizeInput(session, "ts_value", selected = character(0)) })
   
-  # 생존분석
-  observeEvent(input$surv_select_all,   { updateSelectizeInput(session, "surv_covariate", choices = c(numeric_vars_current(), character_vars_current()), selected = c(numeric_vars_current(), character_vars_current())) })
+  # 생존분석 (공변량: 수치형 + 범주형/숫자형 범주)
+  observeEvent(input$surv_select_all,   { updateSelectizeInput(session, "surv_covariate", choices = c(numeric_vars_current(), categorical_vars_current()), selected = c(numeric_vars_current(), categorical_vars_current())) })
   observeEvent(input$surv_deselect_all, { updateSelectizeInput(session, "surv_covariate", selected = character(0)) })
   
   # ============================================================================
@@ -633,12 +650,16 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    numeric_vars <- names(data_store$original_data)[
-      sapply(data_store$original_data, is.numeric)
+    # 후보 변수는 detect_all_variable_types() 결과 기준으로 생성
+    test_type_result <- detect_all_variable_types(data_store$original_data)
+    
+    numeric_vars <- test_type_result$variable[
+      test_type_result$variable_type == "수치형 변수"
     ]
     
-    character_vars <- names(data_store$original_data)[
-      sapply(data_store$original_data, is.character)
+    # 범주형 후보: 범주형 변수 + 숫자형 범주 변수
+    character_vars <- test_type_result$variable[
+      test_type_result$variable_type %in% c("범주형 변수", "숫자형 범주 변수")
     ]
     
     # 빈 경우 안내 메시지용 더미값
@@ -762,20 +783,31 @@ server <- function(input, output, session) {
     
     data_store$quality_report <- assess_data_quality(data_store$original_data)
     
-    data_store$suitability_result <- evaluate_suitability(
-      quality_report = data_store$quality_report,
-      purpose        = input$analysis_purpose,
-      data           = data_store$original_data,
-      selected_vars  = list(
-        # 공통
-        purpose = input$analysis_purpose,
-        
-        # EDA / 기초통계 / 범주형
+    purpose <- input$analysis_purpose
+    
+    # 분석 목적별로 selected_vars를 분리해서 생성한다.
+    # (reg_response %||% class_response 처럼 서로 다른 분석의 input이
+    #  섞이지 않도록 switch()로 목적별 key만 담는다.)
+    selected_vars <- switch(
+      purpose,
+      
+      # EDA / 기초통계 / 범주형 빈도
+      basic_stats = list(
+        purpose       = purpose,
         selected_vars = input$eda_vars,
         variables     = input$eda_vars,
-        eda_vars      = input$eda_vars,
-        
-        # 가설 검정
+        eda_vars      = input$eda_vars
+      ),
+      visualization = list(
+        purpose       = purpose,
+        selected_vars = input$eda_vars,
+        variables     = input$eda_vars,
+        eda_vars      = input$eda_vars
+      ),
+      
+      # 가설 검정
+      advanced_ml = list(
+        purpose        = purpose,
         test_type      = input$test_type,
         group_var      = input$mean_group,
         group_variable = input$mean_group,
@@ -783,32 +815,75 @@ server <- function(input, output, session) {
         chi_var1       = input$chi_var1,
         chi_var2       = input$chi_var2,
         corr_var1      = input$corr_var1,
-        corr_var2      = input$corr_var2,
-        
-        # 상관분석
-        corr_variables = input$corr_variables,
-        
-        # 회귀 / 분류 공통
-        response_var   = input$reg_response %||% input$class_response,
-        y_var          = input$reg_response %||% input$class_response,
-        predictor_vars = input$reg_explanatory %||% input$class_explanatory,
-        x_vars         = input$reg_explanatory %||% input$class_explanatory,
-        
-        # 군집 / 차원축소
-        cluster_vars = input$cluster_variables,
-        dim_vars     = input$dim_variables,
-        
-        # 시계열
+        corr_var2      = input$corr_var2
+      ),
+      
+      # 상관분석
+      correlation = list(
+        purpose        = purpose,
+        corr_variables = input$corr_variables
+      ),
+      
+      # 회귀분석: 반응변수가 설명변수에 중복 포함되지 않도록 제거
+      regression = {
+        reg_response    <- input$reg_response
+        reg_explanatory <- setdiff(input$reg_explanatory, reg_response)
+        list(
+          purpose        = purpose,
+          response_var   = reg_response,
+          predictor_vars = reg_explanatory
+        )
+      },
+      
+      # 분류분석: 분류변수가 설명변수에 중복 포함되지 않도록 제거
+      classification = {
+        class_response    <- input$class_response
+        class_explanatory <- setdiff(input$class_explanatory, class_response)
+        list(
+          purpose        = purpose,
+          response_var   = class_response,
+          predictor_vars = class_explanatory
+        )
+      },
+      
+      # 군집분석
+      cluster = list(
+        purpose      = purpose,
+        cluster_vars = input$cluster_variables
+      ),
+      
+      # 차원축소
+      dimension = list(
+        purpose  = purpose,
+        dim_vars = input$dim_variables
+      ),
+      
+      # 시계열
+      time_series = list(
+        purpose       = purpose,
         time_var      = input$ts_time,
         value_var     = input$ts_value,
-        analysis_vars = input$ts_value,
-        
-        # 생존
+        analysis_vars = input$ts_value
+      ),
+      
+      # 생존분석
+      survival = list(
+        purpose           = purpose,
         survival_time_var = input$surv_time,
         event_var         = input$surv_event,
         event_value       = input$event_value,
         covariates        = input$surv_covariate
-      )
+      ),
+      
+      # 기본값
+      list(purpose = purpose)
+    )
+    
+    data_store$suitability_result <- evaluate_suitability(
+      quality_report = data_store$quality_report,
+      purpose        = purpose,
+      data           = data_store$original_data,
+      selected_vars  = selected_vars
     )
     
     updateTabsetPanel(session, "main_tabs", selected = "Step 2: 진단 결과")

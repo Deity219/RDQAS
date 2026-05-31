@@ -218,6 +218,9 @@ check_one_timeseries_variable <- function(df,
   
   unique_time_sorted <- sort(unique(valid_time_values))
   
+  business_day_like <- FALSE
+  time_interval_cv_raw <- NA_real_
+  
   if (length(unique_time_sorted) >= 3) {
     time_intervals <- diff(unique_time_sorted)
     interval_mean <- mean(time_intervals)
@@ -227,6 +230,33 @@ check_one_timeseries_variable <- function(df,
       time_interval_cv <- 0
     } else {
       time_interval_cv <- interval_sd / interval_mean
+    }
+    
+    time_interval_cv_raw <- time_interval_cv
+    
+    # ----------------------------------------------------------
+    # 거래일(영업일) 자료 완화
+    # KOSPI처럼 주말/공휴일이 제외된 일별 거래 자료는
+    # 금~월(3일), 공휴일(>1일) 때문에 간격 CV가 커지지만,
+    # 실제로는 영업일 단위로 규칙적인 시계열이다.
+    # 시간 변수가 날짜형이고, 간격의 대부분이 1~4일이며
+    # 최소 간격이 1일, 중앙값이 작은 경우 규칙적인 것으로 간주한다.
+    # ----------------------------------------------------------
+    time_is_date <- tryCatch(
+      is_date_convertible(time_raw),
+      error = function(e) FALSE
+    )
+    
+    if (isTRUE(time_is_date) && length(time_intervals) >= 1) {
+      prop_small_gap <- mean(time_intervals >= 1 & time_intervals <= 4)
+      
+      if (min(time_intervals) >= 1 &&
+          stats::median(time_intervals) <= 1.5 &&
+          prop_small_gap >= 0.60) {
+        business_day_like <- TRUE
+        # 규칙성 점수/경고 판정에 사용할 CV를 규칙적 수준으로 보정
+        time_interval_cv <- min(time_interval_cv, 0.05)
+      }
     }
   } else {
     time_interval_cv <- NA_real_
@@ -288,6 +318,13 @@ check_one_timeseries_variable <- function(df,
     )
   }
   
+  if (isTRUE(business_day_like)) {
+    messages <- c(
+      messages,
+      "주말·공휴일이 제외된 거래일(영업일) 자료로 보입니다. 달력일 기준 간격은 불규칙하지만 영업일 단위로는 규칙적이므로 시계열 분석에 사용할 수 있습니다."
+    )
+  }
+  
   if (!is.na(time_missing_rate) && time_missing_rate >= 0.05) {
     messages <- c(
       messages,
@@ -330,6 +367,8 @@ check_one_timeseries_variable <- function(df,
         n_valid_timepoints = n_valid_timepoints,
         duplicate_time_ratio = duplicate_time_ratio,
         time_interval_cv = time_interval_cv,
+        time_interval_cv_raw = time_interval_cv_raw,
+        business_day_like = business_day_like,
         time_missing_rate = time_missing_rate,
         analysis_missing_rate = analysis_missing_rate,
         analysis_unique_count = y_unique,
@@ -486,6 +525,8 @@ check_one_timeseries_variable <- function(df,
       n_valid_timepoints = n_valid_timepoints,
       duplicate_time_ratio = duplicate_time_ratio,
       time_interval_cv = time_interval_cv,
+      time_interval_cv_raw = time_interval_cv_raw,
+      business_day_like = business_day_like,
       time_missing_rate = time_missing_rate,
       analysis_missing_rate = analysis_missing_rate,
       analysis_unique_count = y_unique,
