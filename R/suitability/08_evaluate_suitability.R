@@ -1,5 +1,5 @@
 # ============================================================
-# 13_evaluate_suitability.R
+# 08_evaluate_suitability.R
 # 분석 목적별 적합성 평가 통합 함수
 # ============================================================
 
@@ -89,12 +89,24 @@ status_to_color <- function(status) {
 # ------------------------------------------------------------
 # 미선택 결과 반환
 # ------------------------------------------------------------
-make_unselected_result <- function(message = "분석 목적이 선택되지 않았습니다.") {
+make_unselected_result <- function(message = "분석 목적이 선택되지 않았습니다.",
+                                   selected_vars = list(),
+                                   purpose = NA_character_,
+                                   purpose_label = NA_character_) {
   list(
+    analysis = purpose_label,
+    purpose = purpose,
+    purpose_label = purpose_label,
     status = "미선택",
     color = "secondary",
+    score = NA_real_,
     message = message,
-    recommendations = character()
+    recommendations = character(),
+    messages = character(),
+    notes = character(),
+    selected_vars = selected_vars,
+    detail = NULL,
+    raw_result = NULL
   )
 }
 
@@ -134,27 +146,38 @@ extract_status <- function(res) {
 # ------------------------------------------------------------
 # 일반 적합성 평가 결과를 보고서용 구조로 변환
 # ------------------------------------------------------------
-convert_result_to_report <- function(res, purpose_label) {
+convert_result_to_report <- function(res,
+                                     purpose,
+                                     purpose_label,
+                                     selected_vars = list()) {
   
   status <- extract_status(res)
   color <- status_to_color(status)
+  score <- res$score %||% NA_real_
   
   score_text <- ""
-  
-  if (!is.null(res$score) && !is.na(res$score)) {
-    score_text <- paste0(" (", round(res$score, 1), "점)")
+  if (!is.null(score) && length(score) == 1 && !is.na(score)) {
+    score_text <- paste0(" (", round(score, 1), "점)")
   }
   
-  recommendations <- unique(c(
-    res$messages %||% character(),
-    res$notes %||% character()
-  ))
+  messages <- res$messages %||% character()
+  notes <- res$notes %||% character()
+  recommendations <- unique(c(messages, notes))
   
   list(
+    analysis = res$analysis %||% purpose_label,
+    purpose = purpose,
+    purpose_label = purpose_label,
     status = status,
     color = color,
+    score = score,
     message = paste0(purpose_label, " 적합성 평가 결과: ", status, score_text),
-    recommendations = recommendations
+    recommendations = recommendations,
+    messages = messages,
+    notes = notes,
+    selected_vars = selected_vars,
+    detail = res$detail %||% NULL,
+    raw_result = res
   )
 }
 
@@ -162,16 +185,30 @@ convert_result_to_report <- function(res, purpose_label) {
 # ------------------------------------------------------------
 # 시계열 적합성 평가 결과를 보고서용 구조로 변환
 # ------------------------------------------------------------
-convert_timeseries_to_report <- function(res, purpose_label = "시계열 분석") {
+convert_timeseries_to_report <- function(res,
+                                         purpose = "time_series",
+                                         purpose_label = "시계열분석",
+                                         selected_vars = list()) {
   
   variable_results <- res$variable_results %||% list()
   
   if (length(variable_results) == 0) {
     return(list(
+      analysis = res$analysis %||% purpose_label,
+      purpose = purpose,
+      purpose_label = purpose_label,
       status = "부적합",
       color = "danger",
+      score = 0,
       message = paste0(purpose_label, " 적합성 평가 결과: 부적합"),
-      recommendations = character()
+      recommendations = c("시계열 분석에 사용할 수 있는 분석 변수가 없습니다."),
+      messages = c("시계열 분석에 사용할 수 있는 분석 변수가 없습니다."),
+      notes = character(),
+      selected_vars = selected_vars,
+      detail = res$detail %||% NULL,
+      variable_results = variable_results,
+      results_table = res$results_table %||% NULL,
+      raw_result = res
     ))
   }
   
@@ -193,24 +230,49 @@ convert_timeseries_to_report <- function(res, purpose_label = "시계열 분석"
   
   valid_scores <- scores[!is.na(scores)]
   
-  score_text <- ""
-  
-  if (length(valid_scores) > 0) {
-    score_text <- paste0(" (평균 ", round(mean(valid_scores), 1), "점)")
+  score <- if (length(valid_scores) > 0) {
+    mean(valid_scores)
+  } else {
+    NA_real_
   }
   
-  recommendations <- unique(unlist(
+  score_text <- ""
+  if (!is.na(score)) {
+    score_text <- paste0(" (평균 ", round(score, 1), "점)")
+  }
+  
+  messages <- unique(unlist(
     lapply(variable_results, function(x) {
       x$messages %||% character()
     }),
     use.names = FALSE
   ))
   
+  notes <- unique(unlist(
+    lapply(variable_results, function(x) {
+      x$notes %||% character()
+    }),
+    use.names = FALSE
+  ))
+  
+  recommendations <- unique(c(messages, notes))
+  
   list(
+    analysis = res$analysis %||% purpose_label,
+    purpose = purpose,
+    purpose_label = purpose_label,
     status = status,
     color = status_to_color(status),
+    score = score,
     message = paste0(purpose_label, " 적합성 평가 결과: ", status, score_text),
-    recommendations = recommendations
+    recommendations = recommendations,
+    messages = messages,
+    notes = notes,
+    selected_vars = selected_vars,
+    detail = res$detail %||% NULL,
+    variable_results = variable_results,
+    results_table = res$results_table %||% NULL,
+    raw_result = res
   )
 }
 
@@ -250,15 +312,28 @@ evaluate_suitability <- function(quality_report,
   # 0. 기본 입력 확인
   # ----------------------------------------------------------
   if (is.null(purpose) || length(purpose) == 0 || is.na(purpose) || purpose == "") {
-    return(make_unselected_result())
+    return(make_unselected_result(
+      selected_vars = selected_vars,
+      purpose = purpose,
+      purpose_label = NA_character_
+    ))
   }
   
   if (is.null(data) || !is.data.frame(data)) {
     return(list(
+      analysis = NA_character_,
+      purpose = purpose,
+      purpose_label = NA_character_,
       status = "부적합",
       color = "danger",
+      score = 0,
       message = "적합성 평가에 사용할 데이터가 없습니다.",
-      recommendations = character()
+      recommendations = character(),
+      messages = character(),
+      notes = character(),
+      selected_vars = selected_vars,
+      detail = NULL,
+      raw_result = NULL
     ))
   }
   
@@ -291,7 +366,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_result_to_report(
         res = res,
-        purpose_label = "데이터 탐색(EDA)"
+        purpose = purpose,
+        purpose_label = ifelse(purpose == "basic_stats", "기초 통계 분석", "시각화/EDA"),
+        selected_vars = selected_vars
       ))
     }
     
@@ -311,7 +388,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_result_to_report(
         res = res,
-        purpose_label = "가설 검정"
+        purpose = purpose,
+        purpose_label = "통계적 검정 / 가설 검정",
+        selected_vars = selected_vars
       ))
     }
     
@@ -341,7 +420,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_result_to_report(
         res = res,
-        purpose_label = "회귀 모델"
+        purpose = purpose,
+        purpose_label = "회귀분석",
+        selected_vars = selected_vars
       ))
     }
     
@@ -371,7 +452,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_result_to_report(
         res = res,
-        purpose_label = "분류 모델"
+        purpose = purpose,
+        purpose_label = "분류분석",
+        selected_vars = selected_vars
       ))
     }
     
@@ -395,7 +478,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_result_to_report(
         res = res,
-        purpose_label = "군집분석"
+        purpose = purpose,
+        purpose_label = "군집분석",
+        selected_vars = selected_vars
       ))
     }
     
@@ -409,7 +494,7 @@ evaluate_suitability <- function(quality_report,
       
       analysis_vars <- get_selected_vars(
         selected_vars,
-        c("analysis_vars", "value_vars", "target_vars", "selected_vars", "variables")
+        c("value_var", "value_vars", "analysis_vars", "target_vars", "selected_vars", "variables")
       )
       
       forecast_model <- get_selected_value(
@@ -430,7 +515,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_timeseries_to_report(
         res = res,
-        purpose_label = "시계열 분석"
+        purpose = purpose,
+        purpose_label = "시계열분석",
+        selected_vars = selected_vars
       ))
     }
     
@@ -489,7 +576,9 @@ evaluate_suitability <- function(quality_report,
       
       return(convert_result_to_report(
         res = res,
-        purpose_label = "생존 분석"
+        purpose = purpose,
+        purpose_label = "생존분석",
+        selected_vars = selected_vars
       ))
     }
     
@@ -498,15 +587,88 @@ evaluate_suitability <- function(quality_report,
       
       vars <- get_selected_vars(
         selected_vars,
-        c("selected_vars", "variables", "analysis_vars")
+        c("corr_variables", "selected_vars", "variables", "analysis_vars")
       )
       
-      if (length(vars) == 0) {
-        vars_for_check <- character()
-        vars_for_eda <- NULL
+      purpose_label <- ifelse(
+        purpose == "correlation",
+        "상관분석",
+        "차원축소/다변량 구조 분석"
+      )
+      
+      all_numeric_vars <- type_result$variable[
+        type_result$variable_type == "수치형 변수"
+      ]
+      
+      selected_numeric_vars <- if (length(vars) > 0) {
+        type_result$variable[
+          type_result$variable %in% vars &
+            type_result$variable_type == "수치형 변수"
+        ]
       } else {
-        vars_for_check <- vars
-        vars_for_eda <- vars
+        character()
+      }
+      
+      if (length(all_numeric_vars) < 2) {
+        msg <- paste0(
+          "데이터에 ", purpose_label,
+          "에 사용할 수 있는 수치형 변수가 2개 미만입니다. ",
+          purpose_label,
+          "은 최소 2개 이상의 수치형 변수가 필요합니다."
+        )
+        
+        return(list(
+          analysis = purpose_label,
+          purpose = purpose,
+          purpose_label = purpose_label,
+          status = "부적합",
+          color = "danger",
+          score = 0,
+          message = paste0(purpose_label, " 적합성 평가 결과: 부적합"),
+          recommendations = c(msg),
+          messages = c(msg),
+          notes = character(),
+          selected_vars = selected_vars,
+          detail = list(
+            numeric_vars = all_numeric_vars,
+            selected_vars = vars,
+            selected_numeric_vars = selected_numeric_vars
+          ),
+          raw_result = NULL
+        ))
+      }
+      
+      if (length(vars) > 0 && length(selected_numeric_vars) < 2) {
+        msg <- paste0(
+          "선택한 변수 중 ", purpose_label,
+          "에 사용할 수 있는 수치형 변수가 2개 미만입니다. 수치형 변수를 2개 이상 선택하세요."
+        )
+        
+        return(list(
+          analysis = purpose_label,
+          purpose = purpose,
+          purpose_label = purpose_label,
+          status = "부적합",
+          color = "danger",
+          score = 0,
+          message = paste0(purpose_label, " 적합성 평가 결과: 부적합"),
+          recommendations = c(msg),
+          messages = c(msg),
+          notes = character(),
+          selected_vars = selected_vars,
+          detail = list(
+            numeric_vars = all_numeric_vars,
+            selected_vars = vars,
+            selected_numeric_vars = selected_numeric_vars
+          ),
+          raw_result = NULL
+        ))
+      }
+      
+      vars_for_eda <- if (length(vars) == 0) {
+        all_numeric_vars
+      } else {
+        selected_numeric_vars
       }
       
       res <- check_eda(
@@ -515,34 +677,11 @@ evaluate_suitability <- function(quality_report,
         selected_vars = vars_for_eda
       )
       
-      numeric_ok <- check_numeric_two_or_more(
-        type_result = type_result,
-        selected_vars = vars_for_check
-      )
-      
-      if (!numeric_ok) {
-        recommendations <- unique(c(
-          res$messages %||% character(),
-          res$notes %||% character()
-        ))
-        
-        return(list(
-          status = "부적합",
-          color = "danger",
-          message = "수치형 변수 2개 이상 확인 조건을 충족하지 못했습니다.",
-          recommendations = recommendations
-        ))
-      }
-      
-      purpose_label <- ifelse(
-        purpose == "correlation",
-        "상관 분석",
-        "차원축소/다변량 구조 분석"
-      )
-      
       return(convert_result_to_report(
         res = res,
-        purpose_label = purpose_label
+        purpose = purpose,
+        purpose_label = purpose_label,
+        selected_vars = selected_vars
       ))
     }
     
@@ -551,15 +690,27 @@ evaluate_suitability <- function(quality_report,
     # 정의되지 않은 목적
     # --------------------------------------------------------
     make_unselected_result(
-      message = "선택한 분석 목적에 해당하는 적합성 평가 함수가 없습니다."
+      message = "선택한 분석 목적에 해당하는 적합성 평가 함수가 없습니다.",
+      selected_vars = selected_vars,
+      purpose = purpose,
+      purpose_label = NA_character_
     )
     
   }, error = function(e) {
     list(
+      analysis = NA_character_,
+      purpose = purpose,
+      purpose_label = NA_character_,
       status = "부적합",
       color = "danger",
+      score = 0,
       message = paste0("적합성 평가 중 오류가 발생했습니다: ", conditionMessage(e)),
-      recommendations = character()
+      recommendations = character(),
+      messages = character(),
+      notes = character(),
+      selected_vars = selected_vars,
+      detail = NULL,
+      raw_result = NULL
     )
   })
   

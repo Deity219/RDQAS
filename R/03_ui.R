@@ -370,8 +370,13 @@ ui <- fluidPage(
                             br(),
                             downloadButton(
                               "download_report",
-                              "HTML 보고서 다운로드",
+                              "내 PC로 다운로드",
                               class = "btn btn-primary btn-lg"
+                            ),
+                            actionButton(
+                              "save_to_reports",
+                              "💾 reports/에 저장",
+                              class = "btn btn-success btn-lg"
                             ),
                             br(), br(),
                             

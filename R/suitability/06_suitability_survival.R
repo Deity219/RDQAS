@@ -257,7 +257,7 @@ check_survival <- function(df,
   } else if (event_unique_count >= 3) {
     messages <- c(
       messages,
-      "기본 생존 분석에는 바로 사용하기 어렵습니다. 사건 발생과 중도절단을 구분하는 이진 변수로 재코딩이 필요합니다."
+      "선택한 사건변수에 3개 이상의 상태값이 존재합니다. 생존분석에는 사건 발생 여부가 0/1로 구분된 이진 사건변수가 필요하므로, 사건 발생 여부를 0/1로 재코딩한 뒤 사용하세요. 예를 들어 pbc 데이터의 status 변수를 사용할 경우, 분석 목적에 따라 status = 2를 사건 발생으로 정의한 이진 변수를 새로 만들 수 있습니다."
     )
   }
   
@@ -280,6 +280,29 @@ check_survival <- function(df,
       event_confirmed <- TRUE
       event_indicator <- event_chr == event_value_chr
       censored_indicator <- !is.na(event_chr) & event_chr != event_value_chr
+    }
+    
+  } else if (event_selected && event_unique_count >= 3) {
+    
+    event_value_chr <- as.character(event_value)
+    
+    if (!is.null(event_value) &&
+        length(event_value) == 1 &&
+        !is.na(event_value_chr) &&
+        event_value_chr %in% event_unique_values) {
+      
+      event_confirmed <- TRUE
+      event_indicator <- event_chr == event_value_chr
+      censored_indicator <- !is.na(event_chr) & event_chr != event_value_chr
+      
+      messages <- c(
+        messages,
+        paste0(
+          "사건변수에 3개 이상의 상태값이 있지만, 선택한 사건값 ",
+          event_value_chr,
+          "을 사건 발생으로 간주하여 이진 사건변수처럼 평가했습니다. 실제 분석 전에는 이 기준이 연구 목적에 맞는지 확인하세요."
+        )
+      )
     }
     
   } else if (event_selected && event_unique_count == 1) {
@@ -369,9 +392,7 @@ check_survival <- function(df,
   f1 <- time_selected
   f2 <- time_selected && time_valid
   f3 <- event_selected
-  f4 <- event_selected &&
-    event_unique_count %in% c(1, 2) &&
-    event_confirmed
+  f4 <- event_selected && event_confirmed
   f5 <- n_valid >= 10
   f6 <- time_unique_count >= 2
   
@@ -381,7 +402,7 @@ check_survival <- function(df,
       "생존 시간 변수가 1개 선택되어 있음",
       "선택한 생존 시간 변수가 결측 제외 후 0 이상의 수치형 기간 변수로 해석 가능함",
       "사건 발생 여부 변수가 1개 선택되어 있음",
-      "사건 발생 여부 변수의 결측 제외 고유값이 1개 또는 2개이며, 사건 발생값을 선택하거나 사건 발생 여부를 확인할 수 있음",
+      "사건 발생 여부 변수를 사건/중도절단의 이진 구조로 해석할 수 있음",
       "생존 시간 변수와 사건 발생 여부 변수 기준, 결측 제외 유효 관측치가 10개 이상 존재",
       "생존 시간 변수의 결측 제외 고유값 수가 2개 이상 존재"
     ),
