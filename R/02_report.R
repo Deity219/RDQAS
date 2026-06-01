@@ -209,7 +209,7 @@ generate_html_report <- function(file, data, report, suitability,
   # RDQAS는 전체 변수 탐색 도구가 아니라 품질 문제가 두드러지는 변수를 요약해
   # 보여주는 서비스이다. 따라서 결측/이상치 시각화는 공통 helper(09_)를 사용해
   # Step 3 품질 시각화 탭과 동일하게 "상위 VIS_TOP_N개"만 표시한다.
-
+  
   # 결측률 상위 VIS_TOP_N개 막대그래프 (결측치가 있는 변수만)
   missing_plot_tag <- ""
   miss_top <- tryCatch(
@@ -228,7 +228,7 @@ generate_html_report <- function(file, data, report, suitability,
       missing_plot_tag <<- "<p style='color:#999;'>시각화를 생성할 수 없습니다.</p>"
     })
   }
-
+  
   # 이상치 비율 상위 VIS_TOP_N개 박스플롯 (IQR 기준 이상치가 탐지된 수치형 변수만)
   # 한 줄로 나열하지 않고 facet_wrap으로 여러 줄 배치한다.
   boxplot_tag <- ""
@@ -239,8 +239,8 @@ generate_html_report <- function(file, data, report, suitability,
   if (length(outlier_vars) > 0) {
     tryCatch({
       box_ncol   <- 4
-      n_rows     <- ceiling(length(outlier_vars) / box_ncol)
-      box_height <- max(3.5, n_rows * 2.2 + 0.8)
+      n_box_rows <- ceiling(length(outlier_vars) / box_ncol)
+      box_height <- max(3.5, n_box_rows * 2.2 + 0.8)
       p_box      <- make_outlier_boxplot(data, outlier_vars, ncol = box_ncol)
       img_b64    <- plot_to_base64(p_box, width = 9, height = box_height)
       boxplot_tag <- paste0(
