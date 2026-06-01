@@ -8,8 +8,9 @@ server <- function(input, output, session) {
   data_store <- reactiveValues(
     original_data = NULL,
     quality_report = NULL,
-    suitability = NULL,
-    selected_variables = NULL
+    suitability_result = NULL,
+    selected_variables = NULL,
+    report_result = NULL
   )
   
   # 변수 후보는 is.numeric()이 아니라 detect_all_variable_types() 결과 기준으로 생성
@@ -167,6 +168,7 @@ server <- function(input, output, session) {
       data_store$quality_report <- NULL
       data_store$suitability_result <- NULL
       data_store$selected_variables <- NULL
+      data_store$report_result <- NULL
       
       showNotification(
         "파일이 성공적으로 로드되었습니다.",
@@ -1138,6 +1140,44 @@ server <- function(input, output, session) {
         )
       )
     )
+  })
+  
+  # ============================================================================
+  # 8-2. Step 3 품질 시각화 출력
+  #  - 전체 변수 탐색이 아니라 품질 문제가 두드러지는 변수만 요약해서 보여준다.
+  #  - 공통 helper(R/quality/09_quality_visualization_helpers.R)를 사용하므로
+  #    HTML 보고서 시각화 섹션과 동일한 기준(상위 VIS_TOP_N개)으로 출력된다.
+  # ============================================================================
+  
+  # 결측값 분포: 결측률 상위 VIS_TOP_N개
+  output$missing_plot <- renderPlot({
+    req(data_store$quality_report)
+    
+    miss_df <- get_top_missing_vars(data_store$quality_report, top_n = VIS_TOP_N)
+    
+    validate(
+      need(nrow(miss_df) > 0, "결측치가 있는 변수가 없습니다.")
+    )
+    
+    make_missing_plot(miss_df)
+  })
+  
+  # 이상치 박스플롯: IQR 기준 이상치 비율 상위 VIS_TOP_N개
+  output$outlier_boxplot <- renderPlot({
+    req(data_store$quality_report)
+    req(data_store$original_data)
+    
+    outlier_vars <- get_top_outlier_vars(
+      data_store$quality_report,
+      data_store$original_data,
+      top_n = VIS_TOP_N
+    )
+    
+    validate(
+      need(length(outlier_vars) > 0, "IQR 기준 이상치가 탐지된 수치형 변수가 없습니다.")
+    )
+    
+    make_outlier_boxplot(data_store$original_data, outlier_vars, ncol = 4)
   })
   
   # ============================================================================

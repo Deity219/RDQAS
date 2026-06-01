@@ -205,92 +205,47 @@ generate_html_report <- function(file, data, report, suitability,
   # 시각화 생성
   # --------------------------------------------------------------------------
   
-  # 결측치 막대그래프 (결측치 있을 때만)
+  # 시각화 방향:
+  # RDQAS는 전체 변수 탐색 도구가 아니라 품질 문제가 두드러지는 변수를 요약해
+  # 보여주는 서비스이다. 따라서 결측/이상치 시각화는 공통 helper(09_)를 사용해
+  # Step 3 품질 시각화 탭과 동일하게 "상위 VIS_TOP_N개"만 표시한다.
+
+  # 결측률 상위 VIS_TOP_N개 막대그래프 (결측치가 있는 변수만)
   missing_plot_tag <- ""
-  if (!is.null(missing_df) && nrow(missing_df) > 0) {
-    miss_df <- missing_df
-    p_miss <- ggplot2::ggplot(
-      miss_df,
-      ggplot2::aes(
-        x    = reorder(variable, missing_percent),
-        y    = missing_percent,
-        fill = ifelse(missing_percent >= 10, "#E24B4A", "#f5821d")
-      )
-    ) +
-      ggplot2::geom_col(width = 0.55, show.legend = FALSE) +
-      ggplot2::geom_text(
-        ggplot2::aes(label = paste0(missing_percent, "%")),
-        hjust = -0.1, size = 3.5
-      ) +
-      ggplot2::scale_fill_identity() +
-      ggplot2::scale_y_continuous(
-        limits = c(0, max(miss_df$missing_percent, na.rm = TRUE) * 1.3)
-      ) +
-      ggplot2::coord_flip() +
-      ggplot2::labs(x = NULL, y = "결측률 (%)") +
-      ggplot2::theme_minimal(base_size = 11) +
-      ggplot2::theme(
-        panel.grid.major.y = ggplot2::element_blank(),
-        plot.margin        = ggplot2::margin(8, 32, 8, 8)
-      )
-    
+  miss_top <- tryCatch(
+    get_top_missing_vars(report, top_n = VIS_TOP_N),
+    error = function(e) NULL
+  )
+  if (!is.null(miss_top) && is.data.frame(miss_top) && nrow(miss_top) > 0) {
     tryCatch({
-      img_b64 <- plot_to_base64(p_miss)
+      p_miss  <- make_missing_plot(miss_top)
+      img_b64 <- plot_to_base64(p_miss, height = max(3.5, nrow(miss_top) * 0.32 + 1))
       missing_plot_tag <- paste0(
         "<img src='data:image/png;base64,", img_b64,
-        "' style='max-width:100%; height:auto;' alt='결측치 분포'>"
+        "' style='max-width:100%; height:auto;' alt='결측률 상위 변수'>"
       )
     }, error = function(e) {
       missing_plot_tag <<- "<p style='color:#999;'>시각화를 생성할 수 없습니다.</p>"
     })
   }
-  
-  # 수치형 변수 박스플롯 (수치형 변수 있을 때만)
+
+  # 이상치 비율 상위 VIS_TOP_N개 박스플롯 (IQR 기준 이상치가 탐지된 수치형 변수만)
+  # 한 줄로 나열하지 않고 facet_wrap으로 여러 줄 배치한다.
   boxplot_tag <- ""
-  num_cols <- if (!is.null(report$variable_types) &&
-                  "variable_type" %in% names(report$variable_types)) {
-    report$variable_types$variable[
-      report$variable_types$variable_type == "수치형 변수"
-    ]
-  } else {
-    names(data)[sapply(data, is.numeric)]
-  }
-  
-  num_cols <- num_cols[nchar(num_cols) > 0]  # 빈 변수명 제거
-  num_cols <- num_cols[!is.na(num_cols)]
-  num_cols <- num_cols[num_cols %in% names(data)] 
-  
-  if (length(num_cols) > 0) {
-    plot_df <- data[, num_cols, drop = FALSE]
-    plot_long <- tidyr::pivot_longer(
-      plot_df,
-      cols      = dplyr::everything(),
-      names_to  = "variable",
-      values_to = "value"
-    )
-    plot_long <- plot_long[!is.na(plot_long$value), ]
-    
-    p_box <- ggplot2::ggplot(plot_long, ggplot2::aes(x = variable, y = value)) +
-      ggplot2::geom_boxplot(
-        fill            = "#B5D4F4",
-        color           = "#185FA5",
-        outlier.color   = "#E24B4A",
-        outlier.alpha   = 0.6,
-        width           = 0.5
-      ) +
-      ggplot2::labs(x = NULL, y = "값") +
-      ggplot2::theme_minimal(base_size = 11) +
-      ggplot2::theme(
-        axis.text.x        = ggplot2::element_text(angle = 30, hjust = 1),
-        panel.grid.major.x = ggplot2::element_blank()
-      )
-    
+  outlier_vars <- tryCatch(
+    get_top_outlier_vars(report, data, top_n = VIS_TOP_N),
+    error = function(e) character(0)
+  )
+  if (length(outlier_vars) > 0) {
     tryCatch({
-      box_height <- max(3.5, length(num_cols) * 0.5)
-      img_b64    <- plot_to_base64(p_box, height = box_height)
+      box_ncol   <- 4
+      n_rows     <- ceiling(length(outlier_vars) / box_ncol)
+      box_height <- max(3.5, n_rows * 2.2 + 0.8)
+      p_box      <- make_outlier_boxplot(data, outlier_vars, ncol = box_ncol)
+      img_b64    <- plot_to_base64(p_box, width = 9, height = box_height)
       boxplot_tag <- paste0(
         "<img src='data:image/png;base64,", img_b64,
-        "' style='max-width:100%; height:auto;' alt='수치형 변수 박스플롯'>"
+        "' style='max-width:100%; height:auto;' alt='이상치 비율 상위 수치형 변수 박스플롯'>"
       )
     }, error = function(e) {
       boxplot_tag <<- "<p style='color:#999;'>시각화를 생성할 수 없습니다.</p>"
@@ -1027,23 +982,33 @@ generate_html_report <- function(file, data, report, suitability,
     <!-- 5. 시각화 -->
     <div class="section">
       <div class="section-title">5. 시각화</div>
+      <p style="color:#666; margin:0 0 16px 0;">
+        결측률이 높은 변수와 이상치 비율이 높은 수치형 변수를 중심으로 품질 문제를 요약해 보여줍니다.
+        (각 상위 ', VIS_TOP_N, '개)
+      </p>
 
       <div class="viz-block">
-        <div class="viz-title"> 결측값 분포</div>',
+        <div class="viz-title"> 결측값 분포 (결측률 상위 ', VIS_TOP_N, '개)</div>',
                  
                  if (missing_plot_tag != "") missing_plot_tag
-                 else "<p style='color:#999;'>결측값이 없습니다.</p>",
+                 else "<p style='color:#999;'>결측치가 있는 변수가 없습니다.</p>",
                  
                  '
+        <p style="color:#888; font-size:13px; margin-top:8px;">
+          전체 변수별 결측률은 위 <strong>4. 컬럼별 품질 상세</strong> 표에서 확인할 수 있습니다.
+        </p>
       </div>
 
       <div class="viz-block">
-        <div class="viz-title">  수치형 변수 이상값 (박스플롯)</div>',
+        <div class="viz-title">  수치형 변수 이상값 (박스플롯, 이상치 비율 상위 ', VIS_TOP_N, '개)</div>',
                  
                  if (boxplot_tag != "") boxplot_tag
-                 else "<p style='color:#999;'>수치형 변수가 없습니다.</p>",
+                 else "<p style='color:#999;'>IQR 기준 이상치가 탐지된 수치형 변수가 없습니다.</p>",
                  
                  '
+        <p style="color:#888; font-size:13px; margin-top:8px;">
+          전체 변수별 이상치 수는 위 <strong>4. 컬럼별 품질 상세</strong> 표에서 확인할 수 있습니다.
+        </p>
       </div>
     </div>
 
